@@ -1,0 +1,19 @@
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+
+# macOS app output
+*.app
+*.dSYM
+
+# Local editor state
+.vscode/
+.idea/

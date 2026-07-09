@@ -1,0 +1,558 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* SwitchLoaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000101 /* SwitchLoaderApp.swift */; };
+		100000000000000000000002 /* SwitchLoaderModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000102 /* SwitchLoaderModel.swift */; };
+		100000000000000000000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000103 /* ContentView.swift */; };
+		100000000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000104 /* Assets.xcassets */; };
+		100000000000000000000005 /* SplitMergeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000105 /* SplitMergeService.swift */; };
+		100000000000000000000006 /* SwitchTransferFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000106 /* SwitchTransferFile.swift */; };
+		100000000000000000000007 /* TransferStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000107 /* TransferStatus.swift */; };
+		100000000000000000000008 /* IPv4AddressResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000108 /* IPv4AddressResolver.swift */; };
+		100000000000000000000009 /* NetworkFileServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000109 /* NetworkFileServer.swift */; };
+		10000000000000000000000A /* NetworkInstallConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000010A /* NetworkInstallConfiguration.swift */; };
+		10000000000000000000000B /* NetworkInstallService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000010B /* NetworkInstallService.swift */; };
+		10000000000000000000000C /* SwitchLoaderCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000201 /* SwitchLoaderCore.framework */; };
+		10000000000000000000000D /* SwitchLoaderCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000201 /* SwitchLoaderCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		10000000000000000000000E /* USBInstallConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000110 /* USBInstallConfiguration.swift */; };
+		10000000000000000000000F /* USBDeviceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000111 /* USBDeviceConnection.swift */; };
+		100000000000000000000010 /* TinfoilUSBInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000112 /* TinfoilUSBInstaller.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		100000000000000000000301 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 100000000000000000000400 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000501;
+			remoteInfo = SwitchLoaderCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		100000000000000000000601 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				10000000000000000000000D /* SwitchLoaderCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		100000000000000000000101 /* SwitchLoaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchLoaderApp.swift; sourceTree = "<group>"; };
+		100000000000000000000102 /* SwitchLoaderModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchLoaderModel.swift; sourceTree = "<group>"; };
+		100000000000000000000103 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		100000000000000000000104 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = App/Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		100000000000000000000105 /* SplitMergeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitMergeService.swift; sourceTree = "<group>"; };
+		100000000000000000000106 /* SwitchTransferFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchTransferFile.swift; sourceTree = "<group>"; };
+		100000000000000000000107 /* TransferStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferStatus.swift; sourceTree = "<group>"; };
+		100000000000000000000108 /* IPv4AddressResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPv4AddressResolver.swift; sourceTree = "<group>"; };
+		100000000000000000000109 /* NetworkFileServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkFileServer.swift; sourceTree = "<group>"; };
+		10000000000000000000010A /* NetworkInstallConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkInstallConfiguration.swift; sourceTree = "<group>"; };
+		10000000000000000000010B /* NetworkInstallService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkInstallService.swift; sourceTree = "<group>"; };
+		10000000000000000000010C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = App/Info.plist; sourceTree = SOURCE_ROOT; };
+		10000000000000000000010D /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = SOURCE_ROOT; };
+		10000000000000000000010E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
+		10000000000000000000010F /* CHANGELOG.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CHANGELOG.md; sourceTree = SOURCE_ROOT; };
+		100000000000000000000110 /* USBInstallConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBInstallConfiguration.swift; sourceTree = "<group>"; };
+		100000000000000000000111 /* USBDeviceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBDeviceConnection.swift; sourceTree = "<group>"; };
+		100000000000000000000112 /* TinfoilUSBInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TinfoilUSBInstaller.swift; sourceTree = "<group>"; };
+		100000000000000000000200 /* SwitchLoader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwitchLoader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000201 /* SwitchLoaderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SwitchLoaderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		100000000000000000000701 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000C /* SwitchLoaderCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000702 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		100000000000000000000800 = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000803 /* App */,
+				100000000000000000000801 /* Sources */,
+				10000000000000000000010D /* Package.swift */,
+				10000000000000000000010E /* README.md */,
+				10000000000000000000010F /* CHANGELOG.md */,
+				100000000000000000000802 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		100000000000000000000801 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000804 /* SwitchLoaderApp */,
+				100000000000000000000805 /* SwitchLoaderCore */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		100000000000000000000802 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000200 /* SwitchLoader.app */,
+				100000000000000000000201 /* SwitchLoaderCore.framework */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		100000000000000000000803 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000104 /* Assets.xcassets */,
+				10000000000000000000010C /* Info.plist */,
+			);
+			path = App;
+			sourceTree = SOURCE_ROOT;
+		};
+		100000000000000000000804 /* SwitchLoaderApp */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000103 /* ContentView.swift */,
+				100000000000000000000101 /* SwitchLoaderApp.swift */,
+				100000000000000000000102 /* SwitchLoaderModel.swift */,
+			);
+			path = SwitchLoaderApp;
+			sourceTree = "<group>";
+		};
+		100000000000000000000805 /* SwitchLoaderCore */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000806 /* Files */,
+				100000000000000000000807 /* Models */,
+				100000000000000000000808 /* Network */,
+				100000000000000000000809 /* USB */,
+			);
+			path = SwitchLoaderCore;
+			sourceTree = "<group>";
+		};
+		100000000000000000000806 /* Files */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000105 /* SplitMergeService.swift */,
+				100000000000000000000106 /* SwitchTransferFile.swift */,
+			);
+			path = Files;
+			sourceTree = "<group>";
+		};
+		100000000000000000000807 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000107 /* TransferStatus.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		100000000000000000000808 /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000108 /* IPv4AddressResolver.swift */,
+				100000000000000000000109 /* NetworkFileServer.swift */,
+				10000000000000000000010A /* NetworkInstallConfiguration.swift */,
+				10000000000000000000010B /* NetworkInstallService.swift */,
+			);
+			path = Network;
+			sourceTree = "<group>";
+		};
+		100000000000000000000809 /* USB */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000110 /* USBInstallConfiguration.swift */,
+				100000000000000000000111 /* USBDeviceConnection.swift */,
+				100000000000000000000112 /* TinfoilUSBInstaller.swift */,
+			);
+			path = USB;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000500 /* SwitchLoader */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000900 /* Build configuration list for PBXNativeTarget "SwitchLoader" */;
+			buildPhases = (
+				100000000000000000000A00 /* Sources */,
+				100000000000000000000701 /* Frameworks */,
+				100000000000000000000B00 /* Resources */,
+				100000000000000000000601 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				100000000000000000000302 /* PBXTargetDependency */,
+			);
+			name = SwitchLoader;
+			productName = SwitchLoader;
+			productReference = 100000000000000000000200 /* SwitchLoader.app */;
+			productType = "com.apple.product-type.application";
+		};
+		100000000000000000000501 /* SwitchLoaderCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000901 /* Build configuration list for PBXNativeTarget "SwitchLoaderCore" */;
+			buildPhases = (
+				100000000000000000000A01 /* Sources */,
+				100000000000000000000702 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SwitchLoaderCore;
+			productName = SwitchLoaderCore;
+			productReference = 100000000000000000000201 /* SwitchLoaderCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000400 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					100000000000000000000500 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					100000000000000000000501 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = 100000000000000000000902 /* Build configuration list for PBXProject "SwitchLoader" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 100000000000000000000800;
+			productRefGroup = 100000000000000000000802 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				100000000000000000000500 /* SwitchLoader */,
+				100000000000000000000501 /* SwitchLoaderCore */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		100000000000000000000B00 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000004 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		100000000000000000000A00 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000003 /* ContentView.swift in Sources */,
+				100000000000000000000001 /* SwitchLoaderApp.swift in Sources */,
+				100000000000000000000002 /* SwitchLoaderModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		100000000000000000000A01 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000005 /* SplitMergeService.swift in Sources */,
+				100000000000000000000006 /* SwitchTransferFile.swift in Sources */,
+				100000000000000000000007 /* TransferStatus.swift in Sources */,
+				100000000000000000000008 /* IPv4AddressResolver.swift in Sources */,
+				100000000000000000000009 /* NetworkFileServer.swift in Sources */,
+				10000000000000000000000A /* NetworkInstallConfiguration.swift in Sources */,
+				10000000000000000000000B /* NetworkInstallService.swift in Sources */,
+				10000000000000000000000E /* USBInstallConfiguration.swift in Sources */,
+				10000000000000000000000F /* USBDeviceConnection.swift in Sources */,
+				100000000000000000000010 /* TinfoilUSBInstaller.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		100000000000000000000302 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000501 /* SwitchLoaderCore */;
+			targetProxy = 100000000000000000000301 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		100000000000000000000910 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoader;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000911 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoader;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		100000000000000000000912 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
+				INSTALL_PATH = "@rpath";
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
+				MACH_O_TYPE = mh_dylib;
+				MARKETING_VERSION = 0.1;
+				OTHER_LDFLAGS = "-lusb-1.0";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoaderCore;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000913 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
+				INSTALL_PATH = "@rpath";
+				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
+				MACH_O_TYPE = mh_dylib;
+				MARKETING_VERSION = 0.1;
+				OTHER_LDFLAGS = "-lusb-1.0";
+				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoaderCore;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		100000000000000000000914 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		100000000000000000000915 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100000000000000000000900 /* Build configuration list for PBXNativeTarget "SwitchLoader" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000910 /* Debug */,
+				100000000000000000000911 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000901 /* Build configuration list for PBXNativeTarget "SwitchLoaderCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000912 /* Debug */,
+				100000000000000000000913 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000902 /* Build configuration list for PBXProject "SwitchLoader" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000914 /* Debug */,
+				100000000000000000000915 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 100000000000000000000400 /* Project object */;
+}
