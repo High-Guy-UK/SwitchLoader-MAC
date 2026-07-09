@@ -1,8 +1,30 @@
 import Foundation
 import SwitchLoaderCore
 
+enum LibraryContentType: Hashable, Sendable {
+    case mainGame
+    case update
+    case dlc
+    case other
+
+    var sortRank: Int {
+        switch self {
+        case .mainGame:
+            0
+        case .update:
+            1
+        case .dlc:
+            2
+        case .other:
+            3
+        }
+    }
+}
+
 struct LibraryItem: Identifiable, Hashable, Sendable {
     let url: URL
+    let title: String
+    let contentType: LibraryContentType
 
     var id: URL {
         url
@@ -25,6 +47,15 @@ final class SwitchLoaderModel: ObservableObject {
 
     private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
+    private nonisolated static let libraryFolderTypes: [String: LibraryContentType] = [
+        "main game": .mainGame,
+        "base": .mainGame,
+        "game": .mainGame,
+        "update": .update,
+        "updates": .update,
+        "dlc": .dlc,
+        "dlcs": .dlc
+    ]
 
     init() {
         if let path = UserDefaults.standard.string(forKey: Self.libraryDirectoryDefaultsKey), !path.isEmpty {
@@ -237,7 +268,7 @@ final class SwitchLoaderModel: ObservableObject {
 
             if values?.isDirectory == true {
                 if isSplitDirectory(url) {
-                    items.append(LibraryItem(url: url))
+                    items.append(libraryItem(for: url, libraryRoot: directory, itemIsDirectory: true))
                     enumerator.skipDescendants()
                 }
                 continue
@@ -245,12 +276,65 @@ final class SwitchLoaderModel: ObservableObject {
 
             guard values?.isRegularFile == true else { continue }
             guard libraryFileExtensions.contains(url.pathExtension.lowercased()) else { continue }
-            items.append(LibraryItem(url: url))
+            items.append(libraryItem(for: url, libraryRoot: directory, itemIsDirectory: false))
         }
 
         return items.sorted {
-            $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
+            if $0.title != $1.title {
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+            if $0.contentType.sortRank != $1.contentType.sortRank {
+                return $0.contentType.sortRank < $1.contentType.sortRank
+            }
+            return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
         }
+    }
+
+    private nonisolated static func libraryItem(for url: URL, libraryRoot: URL, itemIsDirectory: Bool) -> LibraryItem {
+        let metadata = libraryMetadata(for: url, libraryRoot: libraryRoot, itemIsDirectory: itemIsDirectory)
+        return LibraryItem(url: url, title: metadata.title, contentType: metadata.contentType)
+    }
+
+    private nonisolated static func libraryMetadata(
+        for url: URL,
+        libraryRoot: URL,
+        itemIsDirectory: Bool
+    ) -> (title: String, contentType: LibraryContentType) {
+        let root = libraryRoot.standardizedFileURL
+        let rootPath = root.path
+        var current = itemIsDirectory ? url.standardizedFileURL : url.deletingLastPathComponent().standardizedFileURL
+
+        while current.path.hasPrefix(rootPath) {
+            if let contentType = libraryFolderTypes[normalizedFolderName(current.lastPathComponent)] {
+                let gameFolder = current.deletingLastPathComponent()
+                let title = gameFolder.path == rootPath ? current.lastPathComponent : gameFolder.lastPathComponent
+                return (cleanLibraryTitle(title, fallback: url), contentType)
+            }
+
+            if current.path == rootPath { break }
+            let parent = current.deletingLastPathComponent().standardizedFileURL
+            if parent.path == current.path { break }
+            current = parent
+        }
+
+        let containingFolder = itemIsDirectory ? url.deletingLastPathComponent() : url.deletingLastPathComponent()
+        let title = containingFolder.standardizedFileURL.path == rootPath ? url.deletingPathExtension().lastPathComponent : containingFolder.lastPathComponent
+        return (cleanLibraryTitle(title, fallback: url), .other)
+    }
+
+    private nonisolated static func normalizedFolderName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .lowercased()
+    }
+
+    private nonisolated static func cleanLibraryTitle(_ title: String, fallback url: URL) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return url.deletingPathExtension().lastPathComponent
     }
 
     private nonisolated static func isSplitDirectory(_ url: URL) -> Bool {

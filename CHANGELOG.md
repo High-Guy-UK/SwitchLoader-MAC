@@ -18,3 +18,5 @@
 - Dedicated log tab in the main app header.
 - Library tab for scanning a chosen folder and subfolders for NSP, NSZ, XCI, XCZ, and split folders.
 - Library folder persistence, refresh, open-folder, add-all, and single-item add actions.
+- Library folder parsing that shows the game folder name with Main Game, Update, DLC, or Other pills.
+- Library row hover and right-click actions for full filename/path, Finder reveal, path copy, and queue add.

@@ -272,20 +272,14 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                                 .frame(width: 18)
 
-                            Text(item.url.lastPathComponent)
+                            Text(item.title)
                                 .font(.caption.bold())
                                 .lineLimit(1)
                                 .layoutPriority(1)
 
-                            Text("-")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
 
-                            Text(item.url.deletingLastPathComponent().path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            LibraryTypePill(type: item.contentType)
 
                             Button {
                                 model.addFiles([item.url])
@@ -296,6 +290,26 @@ struct ContentView: View {
                             .help("Add to queue")
                         }
                         .padding(.vertical, 2)
+                        .help("\(item.url.lastPathComponent)\n\(item.url.path)")
+                        .contextMenu {
+                            Button {
+                                model.addFiles([item.url])
+                            } label: {
+                                Label("Add to Queue", systemImage: "plus")
+                            }
+
+                            Button {
+                                revealInFinder(item.url)
+                            } label: {
+                                Label("Show in Finder", systemImage: "folder")
+                            }
+
+                            Button {
+                                copyPath(item.url)
+                            } label: {
+                                Label("Copy Path", systemImage: "doc.on.doc")
+                            }
+                        }
                     }
                 }
             }
@@ -380,6 +394,15 @@ struct ContentView: View {
         guard let url = model.libraryDirectory else { return }
         NSWorkspace.shared.open(url)
     }
+
+    private func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func copyPath(_ url: URL) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
+    }
 }
 
 private enum AppTab {
@@ -409,6 +432,19 @@ private struct WorkflowStep: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+private struct LibraryTypePill: View {
+    let type: LibraryContentType
+
+    var body: some View {
+        Text(type.title)
+            .font(.caption2.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(type.tint.opacity(0.16), in: Capsule())
+            .foregroundStyle(type.tint)
     }
 }
 
@@ -473,6 +509,34 @@ private struct StatusBadge: View {
             .green
         case .failed:
             .red
+        }
+    }
+}
+
+private extension LibraryContentType {
+    var title: String {
+        switch self {
+        case .mainGame:
+            "Main Game"
+        case .update:
+            "Update"
+        case .dlc:
+            "DLC"
+        case .other:
+            "Other"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .mainGame:
+            .green
+        case .update:
+            .orange
+        case .dlc:
+            .cyan
+        case .other:
+            .secondary
         }
     }
 }
