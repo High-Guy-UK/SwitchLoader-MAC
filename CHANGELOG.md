@@ -20,3 +20,4 @@
 - Library folder persistence, refresh, open-folder, add-all, and single-item add actions.
 - Library folder parsing that shows the game folder name with Main Game, Update, DLC, or Other pills.
 - Library row hover and right-click actions for full filename/path, Finder reveal, path copy, and queue add.
+- Xcode app bundles now embed and re-link `libusb`, so the app can launch outside Xcode.

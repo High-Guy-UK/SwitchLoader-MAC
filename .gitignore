@@ -6,6 +6,7 @@
 
 # Xcode
 DerivedData/
+.derivedData/
 *.xcuserstate
 xcuserdata/
 *.moved-aside

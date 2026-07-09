@@ -200,6 +200,7 @@
 				100000000000000000000701 /* Frameworks */,
 				100000000000000000000B00 /* Resources */,
 				100000000000000000000601 /* Embed Frameworks */,
+				100000000000000000000603 /* Embed libusb */,
 			);
 			buildRules = (
 			);
@@ -275,6 +276,30 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		100000000000000000000603 /* Embed libusb */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib,
+			);
+			name = "Embed libusb";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libusb-1.0.0.dylib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\nLIBUSB_SOURCE=\"${LIBUSB_DYLIB_PATH:-/opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib}\"\nLIBUSB_NAME=\"libusb-1.0.0.dylib\"\nFRAMEWORKS_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nLIBUSB_DEST=\"${FRAMEWORKS_DIR}/${LIBUSB_NAME}\"\nCORE_FRAMEWORK=\"${FRAMEWORKS_DIR}/SwitchLoaderCore.framework\"\nCORE_BINARY=\"${CORE_FRAMEWORK}/Versions/A/SwitchLoaderCore\"\n\nif [ ! -f \"${LIBUSB_SOURCE}\" ]; then\n    echo \"error: libusb dylib not found at ${LIBUSB_SOURCE}. Install it with: brew install libusb\"\n    exit 1\nfi\n\nmkdir -p \"${FRAMEWORKS_DIR}\"\ncp -f \"${LIBUSB_SOURCE}\" \"${LIBUSB_DEST}\"\nchmod 755 \"${LIBUSB_DEST}\"\ninstall_name_tool -id \"@rpath/${LIBUSB_NAME}\" \"${LIBUSB_DEST}\"\n\nif [ -f \"${CORE_BINARY}\" ]; then\n    install_name_tool -change \"${LIBUSB_SOURCE}\" \"@rpath/${LIBUSB_NAME}\" \"${CORE_BINARY}\"\n    install_name_tool -change /opt/homebrew/Cellar/libusb/*/lib/libusb-1.0.0.dylib \"@rpath/${LIBUSB_NAME}\" \"${CORE_BINARY}\" 2>/dev/null || true\nfi\n\nSIGN_IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:-}\"\nif [ -z \"${SIGN_IDENTITY}\" ]; then\n    SIGN_IDENTITY=\"-\"\nfi\n/usr/bin/codesign --force --sign \"${SIGN_IDENTITY}\" --timestamp=none \"${LIBUSB_DEST}\"\nif [ -d \"${CORE_FRAMEWORK}\" ]; then\n    /usr/bin/codesign --force --sign \"${SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"${CORE_FRAMEWORK}\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		100000000000000000000A00 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -322,7 +347,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
 				INFOPLIST_FILE = App/Info.plist;
@@ -346,7 +371,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = /opt/homebrew/include/libusb-1.0;
 				INFOPLIST_FILE = App/Info.plist;
