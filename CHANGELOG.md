@@ -31,6 +31,8 @@
 - Matched the RCM payload wrapper padding to the fusee-launcher/CrystalRCM reference layout.
 - RCM launch confirmation now treats the successful trigger handoff as success instead of failing when macOS still reports an RCM device.
 - Successful RCM launches no longer show the expected post-launch disconnect as a warning.
+- Xcode archive builds now target Apple Silicon so the bundled Homebrew libusb library links during Product > Archive.
+- Corrected the largest app icon size to the macOS archive-required 1024px asset.
 
 ### Tests
 
