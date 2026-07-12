@@ -30,6 +30,8 @@
 - RCM launch diagnostics now log the discovered bulk endpoints, prepared payload size, chunk count, and trigger length.
 - RCM launches now verify that the device leaves RCM mode before reporting success.
 - Matched the RCM payload wrapper padding to the fusee-launcher/CrystalRCM reference layout.
+- RCM launch confirmation now waits for the post-trigger USB disconnect before reporting a stuck-in-RCM error.
+- Successful RCM launches no longer show the expected post-launch disconnect as a warning.
 
 ### Tests
 

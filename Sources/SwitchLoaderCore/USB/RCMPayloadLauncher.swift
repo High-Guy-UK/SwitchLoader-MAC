@@ -95,8 +95,8 @@ public final class RCMPayloadLauncher {
 
         emit("Triggering RCM launch.", .info, onEvent)
         try triggerVulnerability(connection: connection, onEvent: onEvent)
-        Thread.sleep(forTimeInterval: 0.75)
-        guard !Self.isRCMDeviceConnected else {
+        emit("Waiting for the Switch to leave RCM.", .info, onEvent)
+        guard Self.waitForRCMDisconnect(timeout: 5.0, pollInterval: 0.25) else {
             throw RCMPayloadError.deviceStillInRCM
         }
         onEvent(.progress(1))
@@ -210,6 +210,19 @@ public final class RCMPayloadLauncher {
 
     private static func hex(_ value: UInt8) -> String {
         "0x" + String(value, radix: 16, uppercase: true)
+    }
+
+    private static func waitForRCMDisconnect(timeout: TimeInterval, pollInterval: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !isRCMDeviceConnected {
+                return true
+            }
+
+            Thread.sleep(forTimeInterval: pollInterval)
+        }
+
+        return !isRCMDeviceConnected
     }
 
     private func emit(

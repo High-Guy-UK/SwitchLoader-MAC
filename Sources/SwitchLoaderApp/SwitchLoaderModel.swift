@@ -52,6 +52,7 @@ final class SwitchLoaderModel: ObservableObject {
     private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
     private static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
     private var rcmMonitorTask: Task<Void, Never>?
+    private var suppressNextRCMDisconnectLog = false
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
     private nonisolated static let libraryFolderTypes: [String: LibraryContentType] = [
         "main game": .mainGame,
@@ -327,6 +328,7 @@ final class SwitchLoaderModel: ObservableObject {
             status = .completed
             progress = 1
             rcmInstruction = "RCM payload launched."
+            suppressNextRCMDisconnectLog = true
         }
     }
 
@@ -361,12 +363,17 @@ final class SwitchLoaderModel: ObservableObject {
         guard status != .running else { return }
 
         if connected {
+            suppressNextRCMDisconnectLog = false
             if case .failed = status {
                 status = .idle
             }
             rcmInstruction = selectedPayloadURL == nil ? "RCM detected. Choose a payload to push." : "RCM detected. Ready to push."
             appendLog("RCM device detected.", .success)
         } else if wasConnected {
+            guard !suppressNextRCMDisconnectLog else {
+                suppressNextRCMDisconnectLog = false
+                return
+            }
             rcmInstruction = selectedPayloadURL == nil ? "Choose a payload .bin file to push over RCM." : "Put the Switch into RCM, connect USB, then push."
             appendLog("RCM device disconnected.", .warning)
         }
