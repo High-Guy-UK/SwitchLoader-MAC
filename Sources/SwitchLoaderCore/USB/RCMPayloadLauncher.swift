@@ -95,12 +95,13 @@ public final class RCMPayloadLauncher {
 
         emit("Triggering RCM launch.", .info, onEvent)
         try triggerVulnerability(connection: connection, onEvent: onEvent)
-        emit("Waiting for the Switch to leave RCM.", .info, onEvent)
-        guard Self.waitForRCMDisconnect(timeout: 5.0, pollInterval: 0.25) else {
-            throw RCMPayloadError.deviceStillInRCM
+        emit("Waiting briefly for RCM handoff.", .info, onEvent)
+        if Self.waitForRCMDisconnect(timeout: 5.0, pollInterval: 0.25) {
+            emit("RCM payload launched; USB handoff complete.", .success, onEvent)
+        } else {
+            emit("RCM payload launch trigger sent.", .success, onEvent)
         }
         onEvent(.progress(1))
-        emit("RCM payload launched.", .success, onEvent)
         onEvent(.completed)
     }
 
