@@ -15,7 +15,8 @@ The app currently includes:
 - Split file creation.
 - Split file merge.
 - Library scanning for NSP, NSZ, XCI, XCZ, and split folders inside a chosen folder and its subfolders.
-- A SwiftUI workflow that can grow into Goldleaf USB and RCM support later.
+- RCM payload pushing for `.bin` payloads while the device is in RCM mode.
+- A SwiftUI workflow with separate Install, Library, RCM, and Log tabs.
 
 ## Dependency
 
@@ -49,4 +50,8 @@ swift test
 
 ## Current Scope
 
-USB install currently targets Awoo/Tinfoil-compatible installers. Goldleaf USB and RCM payload injection are planned next-stage work and need hardware testing.
+USB install currently targets Awoo/Tinfoil-compatible installers. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and still needs hardware testing on a real RCM device.
+
+## Attribution
+
+RCM payload launching is derived from [CrystalRCM](https://github.com/prayerie/CrystalRCM), which is licensed under GPL-3.0. See `THIRD_PARTY_NOTICES.md`.

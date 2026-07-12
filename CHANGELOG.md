@@ -21,3 +21,10 @@
 - Library folder parsing that shows the game folder name with Main Game, Update, DLC, or Other pills.
 - Library row hover and right-click actions for full filename/path, Finder reveal, path copy, and queue add.
 - Xcode app bundles now embed and re-link `libusb`, so the app can launch outside Xcode.
+- RCM payload tab for choosing a `.bin` payload, guiding the device into RCM, and pushing over USB from the Mac.
+- CrystalRCM/fusee-style RCM launcher core with embedded intermezzo stage, device ID read, payload chunk upload, and trigger step.
+- Third-party attribution notice for the CrystalRCM-derived RCM implementation.
+
+### Tests
+
+- RCM payload layout and oversized payload coverage in `SwitchLoaderCoreTests`.

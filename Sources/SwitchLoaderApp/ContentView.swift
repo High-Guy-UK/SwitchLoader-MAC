@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import SwitchLoaderCore
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var model: SwitchLoaderModel
@@ -26,6 +27,8 @@ struct ContentView: View {
                 }
             case .library:
                 library
+            case .rcm:
+                rcmWorkflow
             case .log:
                 fullLog
             }
@@ -55,10 +58,11 @@ struct ContentView: View {
             Picker("", selection: $selectedTab) {
                 Label("Install", systemImage: "cable.connector").tag(AppTab.workflow)
                 Label("Library", systemImage: "books.vertical").tag(AppTab.library)
+                Label("RCM", systemImage: "bolt.horizontal").tag(AppTab.rcm)
                 Label("Log", systemImage: "list.bullet.rectangle").tag(AppTab.log)
             }
             .pickerStyle(.segmented)
-            .frame(width: 285)
+            .frame(width: 360)
             .labelsHidden()
 
             Spacer()
@@ -316,6 +320,108 @@ struct ContentView: View {
         }
     }
 
+    private var rcmWorkflow: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 13) {
+                Text("Launch RCM Payload")
+                    .font(.headline)
+
+                WorkflowStep(number: 1, title: "Choose payload", detail: "Select a .bin payload such as hekate or fusee.")
+                WorkflowStep(number: 2, title: "Set RCM mode", detail: "Power the device into RCM before connecting USB.")
+                WorkflowStep(number: 3, title: "Connect USB", detail: "Use a data-capable cable and keep the device in RCM.")
+                WorkflowStep(number: 4, title: "Push from Mac", detail: model.rcmInstruction)
+
+                ProgressView(value: model.progress)
+
+                HStack {
+                    Button {
+                        chooseRCMPayload()
+                    } label: {
+                        Label("Payload", systemImage: "doc.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+
+                    Button {
+                        model.pushRCMPayload()
+                    } label: {
+                        Label("Push", systemImage: "bolt.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canPushRCMPayload)
+                }
+
+                if let selectedPayloadURL = model.selectedPayloadURL {
+                    Button {
+                        revealInFinder(selectedPayloadURL)
+                    } label: {
+                        Label("Show Payload", systemImage: "folder")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 360)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Payload")
+                        .font(.headline)
+                    Spacer()
+                    Text(model.selectedPayloadURL == nil ? "0" : "1")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(14)
+
+                if let selectedPayloadURL = model.selectedPayloadURL {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.fill")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+
+                        Text(selectedPayloadURL.lastPathComponent)
+                            .font(.caption.bold())
+                            .lineLimit(1)
+                            .layoutPriority(1)
+
+                        Text("-")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(selectedPayloadURL.deletingLastPathComponent().path)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(14)
+                    .help(selectedPayloadURL.path)
+                    .contextMenu {
+                        Button {
+                            revealInFinder(selectedPayloadURL)
+                        } label: {
+                            Label("Show in Finder", systemImage: "folder")
+                        }
+
+                        Button {
+                            copyPath(selectedPayloadURL)
+                        } label: {
+                            Label("Copy Path", systemImage: "doc.on.doc")
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("No Payload", systemImage: "doc.badge.plus")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                Spacer()
+            }
+        }
+    }
+
     private var fullLog: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -390,6 +496,22 @@ struct ContentView: View {
         }
     }
 
+    private func chooseRCMPayload() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose RCM payload"
+        panel.prompt = "Choose"
+        panel.message = "Select a payload .bin file to push in RCM mode."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "bin") ?? .data]
+
+        if panel.runModal() == .OK, let url = panel.url {
+            model.setRCMPayload(url)
+        }
+    }
+
     private func openLibraryFolder() {
         guard let url = model.libraryDirectory else { return }
         NSWorkspace.shared.open(url)
@@ -408,6 +530,7 @@ struct ContentView: View {
 private enum AppTab {
     case workflow
     case library
+    case rcm
     case log
 }
 

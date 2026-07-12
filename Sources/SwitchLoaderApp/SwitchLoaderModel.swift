@@ -44,6 +44,8 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var isScanningLibrary = false
     @Published var libraryMessage = "Choose your NSP/XCI folder to build the library."
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
+    @Published var selectedPayloadURL: URL?
+    @Published var rcmInstruction = "Choose a payload .bin file to push over RCM."
 
     private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
@@ -66,6 +68,10 @@ final class SwitchLoaderModel: ObservableObject {
 
     var canStartUSBInstall: Bool {
         !selectedFiles.isEmpty && status != .running
+    }
+
+    var canPushRCMPayload: Bool {
+        selectedPayloadURL != nil && status != .running
     }
 
     func addFiles(_ urls: [URL]) {
@@ -116,6 +122,12 @@ final class SwitchLoaderModel: ObservableObject {
         addFiles(libraryItems.map(\.url))
     }
 
+    func setRCMPayload(_ url: URL) {
+        selectedPayloadURL = url
+        rcmInstruction = "Put the Switch into RCM, connect USB, then push."
+        appendLog("Selected RCM payload \(url.lastPathComponent).", .info)
+    }
+
     func removeFiles(at offsets: IndexSet) {
         selectedFiles.remove(atOffsets: offsets)
         if selectedFiles.isEmpty {
@@ -157,6 +169,38 @@ final class SwitchLoaderModel: ObservableObject {
                 await MainActor.run {
                     self.status = .failed(error.localizedDescription)
                     self.currentInstruction = "Fix the issue below, set the device waiting again, then send."
+                    self.appendLog(error.localizedDescription, .failure)
+                }
+            }
+        }
+    }
+
+    func pushRCMPayload() {
+        guard canPushRCMPayload, let payloadURL = selectedPayloadURL else { return }
+
+        status = .running
+        progress = 0
+        rcmInstruction = "Keep the Switch connected in RCM while the payload is pushed."
+        appendLog("Starting RCM payload push.", .info)
+
+        Task.detached(priority: .userInitiated) {
+            let launcher = RCMPayloadLauncher()
+            do {
+                try launcher.launch(payloadURL: payloadURL) { event in
+                    Task { @MainActor in
+                        self.handleRCMEvent(event)
+                    }
+                }
+                await MainActor.run {
+                    self.status = .completed
+                    self.progress = 1
+                    self.rcmInstruction = "RCM payload launched."
+                    self.appendLog("RCM payload push finished.", .success)
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = .failed(error.localizedDescription)
+                    self.rcmInstruction = "Fix the issue below, return to RCM, then push again."
                     self.appendLog(error.localizedDescription, .failure)
                 }
             }
@@ -244,6 +288,22 @@ final class SwitchLoaderModel: ObservableObject {
             status = .completed
             progress = 1
             currentInstruction = "USB install complete."
+        }
+    }
+
+    private func handleRCMEvent(_ event: USBInstallEvent) {
+        switch event {
+        case let .log(entry):
+            logs.append(entry)
+            if entry.level == .success {
+                rcmInstruction = entry.message
+            }
+        case let .progress(value):
+            progress = value
+        case .completed:
+            status = .completed
+            progress = 1
+            rcmInstruction = "RCM payload launched."
         }
     }
 

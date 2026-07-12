@@ -4,6 +4,8 @@ import Foundation
 final class USBDeviceConnection {
     private static let homebrewVendorID: UInt16 = 0x057E
     private static let homebrewProductID: UInt16 = 0x3000
+    private static let rcmVendorID: UInt16 = 0x0955
+    private static let rcmProductID: UInt16 = 0x7321
     private static let configuration: Int32 = 1
     private static let interfaceNumber: Int32 = 0
 
@@ -16,6 +18,22 @@ final class USBDeviceConnection {
     }
 
     func openHomebrewDevice() throws {
+        try openDevice(
+            vendorID: Self.homebrewVendorID,
+            productID: Self.homebrewProductID,
+            notFoundMessage: USBInstallError.deviceNotFound
+        )
+    }
+
+    func openRCMDevice() throws {
+        try openDevice(
+            vendorID: Self.rcmVendorID,
+            productID: Self.rcmProductID,
+            notFoundMessage: RCMPayloadError.deviceNotFound
+        )
+    }
+
+    private func openDevice(vendorID: UInt16, productID: UInt16, notFoundMessage: Error) throws {
         var contextPointer: OpaquePointer?
         let initResult = libusb_init(&contextPointer)
         guard initResult == LIBUSB_SUCCESS.rawValue, let contextPointer else {
@@ -25,11 +43,11 @@ final class USBDeviceConnection {
 
         handle = libusb_open_device_with_vid_pid(
             contextPointer,
-            Self.homebrewVendorID,
-            Self.homebrewProductID
+            vendorID,
+            productID
         )
         guard let handle else {
-            throw USBInstallError.deviceNotFound
+            throw notFoundMessage
         }
 
         _ = libusb_set_auto_detach_kernel_driver(handle, 1)
@@ -86,6 +104,33 @@ final class USBDeviceConnection {
         }
 
         return Data(buffer.prefix(Int(transferred)))
+    }
+
+    func controlRead(
+        requestType: UInt8,
+        request: UInt8,
+        value: UInt16,
+        index: UInt16,
+        length: Int,
+        timeout: UInt32 = 1_000
+    ) throws -> Data {
+        var buffer = [UInt8](repeating: 0, count: length)
+        let result = libusb_control_transfer(
+            handle,
+            requestType,
+            request,
+            value,
+            index,
+            &buffer,
+            UInt16(length),
+            timeout
+        )
+
+        guard result >= 0 else {
+            throw USBInstallError.transferFailed(Self.errorName(result))
+        }
+
+        return Data(buffer.prefix(Int(result)))
     }
 
     func close() {
