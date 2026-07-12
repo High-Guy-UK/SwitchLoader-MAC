@@ -14,7 +14,8 @@ struct RCMPayloadLauncherTests {
 
         #expect(Array(bytes[0..<4]) == [0x98, 0x02, 0x03, 0x00])
         #expect(Array(bytes[680..<(680 + intermezzo.count)]) == intermezzo)
-        #expect(Array(bytes[0x0E40..<(0x0E40 + userPayload.count)]) == [UInt8](userPayload))
+        let referencePayloadOffset = 680 + intermezzo.count + (0x0E40 - intermezzo.count)
+        #expect(Array(bytes[referencePayloadOffset..<(referencePayloadOffset + userPayload.count)]) == [UInt8](userPayload))
         #expect(exploit.count.isMultiple(of: 0x1000))
     }
 
@@ -25,5 +26,14 @@ struct RCMPayloadLauncherTests {
         #expect(throws: RCMPayloadError.self) {
             _ = try RCMPayloadLauncher.exploitPayload(for: largePayload)
         }
+    }
+
+    @Test("Hekate sized payload matches reference chunk count")
+    func hekateSizedPayloadChunkCount() throws {
+        let hekateSizedPayload = Data(repeating: 0xaa, count: 110_028)
+        let exploit = try RCMPayloadLauncher.exploitPayload(for: hekateSizedPayload)
+
+        #expect(exploit.count == 126_976)
+        #expect(exploit.count / 0x1000 == 31)
     }
 }

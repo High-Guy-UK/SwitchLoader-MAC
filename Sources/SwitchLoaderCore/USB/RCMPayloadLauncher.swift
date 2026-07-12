@@ -112,8 +112,7 @@ public final class RCMPayloadLauncher {
         exploit += [UInt8](repeating: 0, count: 680 - exploit.count)
         exploit += intermezzo
 
-        let payloadStartOffset = Int(payloadStartAddress - rcmPayloadAddress)
-        let paddingToPayloadStart = payloadStartOffset - exploit.count
+        let paddingToPayloadStart = Int(payloadStartAddress - (rcmPayloadAddress + UInt32(intermezzo.count)))
         guard paddingToPayloadStart >= 0 else {
             throw RCMPayloadError.payloadTooLarge(bytesOver: abs(paddingToPayloadStart))
         }
@@ -131,10 +130,8 @@ public final class RCMPayloadLauncher {
             exploit += payloadBytes.dropFirst(firstChunkSize)
         }
 
-        let remainder = exploit.count % chunkSize
-        if remainder != 0 {
-            exploit += [UInt8](repeating: 0, count: chunkSize - remainder)
-        }
+        let paddingToUSBRequest = chunkSize - (exploit.count % chunkSize)
+        exploit += [UInt8](repeating: 0, count: paddingToUSBRequest)
 
         guard exploit.count <= maxPayloadLength else {
             throw RCMPayloadError.payloadTooLarge(bytesOver: exploit.count - maxPayloadLength)

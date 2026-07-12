@@ -29,7 +29,9 @@
 - Corrected the RCM upload endpoint for libusb so payload writes use endpoint `0x01` instead of the IOKit pipe index.
 - RCM launch diagnostics now log the discovered bulk endpoints, prepared payload size, chunk count, and trigger length.
 - RCM launches now verify that the device leaves RCM mode before reporting success.
+- Matched the RCM payload wrapper padding to the fusee-launcher/CrystalRCM reference layout.
 
 ### Tests
 
 - RCM payload layout and oversized payload coverage in `SwitchLoaderCoreTests`.
+- Hekate-sized payload chunk count coverage for the reference RCM wrapper layout.
