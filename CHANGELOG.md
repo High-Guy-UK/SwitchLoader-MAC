@@ -33,6 +33,7 @@
 - Successful RCM launches no longer show the expected post-launch disconnect as a warning.
 - Xcode archive builds now target Apple Silicon so the bundled Homebrew libusb library links during Product > Archive.
 - Corrected the largest app icon size to the macOS archive-required 1024px asset.
+- README and app version metadata now reflect the RCM-capable `v1.1.0` release.
 
 ### Tests
 

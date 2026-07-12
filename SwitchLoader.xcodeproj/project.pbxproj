@@ -362,7 +362,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
@@ -387,7 +387,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/CLibUSB";
@@ -407,7 +407,7 @@
 				INSTALL_PATH = "@rpath";
 				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
 				MACH_O_TYPE = mh_dylib;
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = "-lusb-1.0";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoaderCore;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -429,7 +429,7 @@
 				INSTALL_PATH = "@rpath";
 				LIBRARY_SEARCH_PATHS = /opt/homebrew/lib;
 				MACH_O_TYPE = mh_dylib;
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = "-lusb-1.0";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ian.SwitchLoaderCore;
 				PRODUCT_NAME = "$(TARGET_NAME)";

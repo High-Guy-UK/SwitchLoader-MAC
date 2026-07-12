@@ -1,6 +1,6 @@
 # SwitchLoader
 
-SwitchLoader is a native Swift macOS rewrite path for the practical parts of NS-USBloader.
+SwitchLoader is a native Swift macOS app for Switch USB install workflows, local library browsing, and RCM payload launching.
 
 The main workflow is USB install:
 
@@ -50,7 +50,7 @@ swift test
 
 ## Current Scope
 
-USB install currently targets Awoo/Tinfoil-compatible installers. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and still needs hardware testing on a real RCM device.
+USB install currently targets Awoo/Tinfoil-compatible installers. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and has been tested with Hekate payload launching over USB.
 
 ## Attribution
 
