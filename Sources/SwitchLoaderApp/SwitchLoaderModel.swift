@@ -45,9 +45,11 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var libraryMessage = "Choose your NSP/XCI folder to build the library."
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
     @Published var selectedPayloadURL: URL?
+    @Published var rcmPayloadDirectory: URL?
     @Published var rcmInstruction = "Choose a payload .bin file to push over RCM."
 
     private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
+    private static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
     private nonisolated static let libraryFolderTypes: [String: LibraryContentType] = [
         "main game": .mainGame,
@@ -63,6 +65,10 @@ final class SwitchLoaderModel: ObservableObject {
         if let path = UserDefaults.standard.string(forKey: Self.libraryDirectoryDefaultsKey), !path.isEmpty {
             libraryDirectory = URL(fileURLWithPath: path, isDirectory: true)
             libraryMessage = "Library ready to scan."
+        }
+
+        if let path = UserDefaults.standard.string(forKey: Self.rcmPayloadDirectoryDefaultsKey), !path.isEmpty {
+            rcmPayloadDirectory = URL(fileURLWithPath: path, isDirectory: true)
         }
     }
 
@@ -124,6 +130,8 @@ final class SwitchLoaderModel: ObservableObject {
 
     func setRCMPayload(_ url: URL) {
         selectedPayloadURL = url
+        rcmPayloadDirectory = url.deletingLastPathComponent()
+        UserDefaults.standard.set(rcmPayloadDirectory?.path, forKey: Self.rcmPayloadDirectoryDefaultsKey)
         rcmInstruction = "Put the Switch into RCM, connect USB, then push."
         appendLog("Selected RCM payload \(url.lastPathComponent).", .info)
     }

@@ -24,6 +24,7 @@
 - RCM payload tab for choosing a `.bin` payload, guiding the device into RCM, and pushing over USB from the Mac.
 - CrystalRCM/fusee-style RCM launcher core with embedded intermezzo stage, device ID read, payload chunk upload, and trigger step.
 - Third-party attribution notice for the CrystalRCM-derived RCM implementation.
+- RCM payload folder persistence so the payload picker reopens in the last used folder after restarting the app.
 
 ### Tests
 

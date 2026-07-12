@@ -506,6 +506,7 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.resolvesAliases = true
         panel.allowedContentTypes = [UTType(filenameExtension: "bin") ?? .data]
+        panel.directoryURL = model.rcmPayloadDirectory
 
         if panel.runModal() == .OK, let url = panel.url {
             model.setRCMPayload(url)
