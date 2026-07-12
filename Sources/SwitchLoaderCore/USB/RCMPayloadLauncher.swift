@@ -39,6 +39,10 @@ public final class RCMPayloadLauncher {
 
     public init() {}
 
+    public static var isRCMDeviceConnected: Bool {
+        USBDeviceConnection.rcmDeviceExists()
+    }
+
     public func launch(
         payloadURL: URL,
         onEvent: @escaping @Sendable (USBInstallEvent) -> Void

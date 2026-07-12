@@ -17,6 +17,10 @@ final class USBDeviceConnection {
         close()
     }
 
+    static func rcmDeviceExists() -> Bool {
+        deviceExists(vendorID: rcmVendorID, productID: rcmProductID)
+    }
+
     func openHomebrewDevice() throws {
         try openDevice(
             vendorID: Self.homebrewVendorID,
@@ -62,6 +66,40 @@ final class USBDeviceConnection {
             throw USBInstallError.claimFailed(Self.errorName(claimResult))
         }
         interfaceClaimed = true
+    }
+
+    private static func deviceExists(vendorID: UInt16, productID: UInt16) -> Bool {
+        var contextPointer: OpaquePointer?
+        let initResult = libusb_init(&contextPointer)
+        guard initResult == LIBUSB_SUCCESS.rawValue, let contextPointer else {
+            return false
+        }
+        defer {
+            libusb_exit(contextPointer)
+        }
+
+        var deviceList: UnsafeMutablePointer<OpaquePointer?>?
+        let deviceCount = libusb_get_device_list(contextPointer, &deviceList)
+        guard deviceCount > 0, let deviceList else {
+            return false
+        }
+        defer {
+            libusb_free_device_list(deviceList, 1)
+        }
+
+        for index in 0..<Int(deviceCount) {
+            guard let device = deviceList[index] else { continue }
+
+            var descriptor = libusb_device_descriptor()
+            let descriptorResult = libusb_get_device_descriptor(device, &descriptor)
+            guard descriptorResult == LIBUSB_SUCCESS.rawValue else { continue }
+
+            if descriptor.idVendor == vendorID && descriptor.idProduct == productID {
+                return true
+            }
+        }
+
+        return false
     }
 
     func bulkWrite(endpoint: UInt8, data: Data, timeout: UInt32 = 5_050) throws {

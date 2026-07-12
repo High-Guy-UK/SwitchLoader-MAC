@@ -46,10 +46,12 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
     @Published var selectedPayloadURL: URL?
     @Published var rcmPayloadDirectory: URL?
+    @Published var isRCMDeviceConnected = false
     @Published var rcmInstruction = "Choose a payload .bin file to push over RCM."
 
     private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
     private static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
+    private var rcmMonitorTask: Task<Void, Never>?
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
     private nonisolated static let libraryFolderTypes: [String: LibraryContentType] = [
         "main game": .mainGame,
@@ -70,6 +72,12 @@ final class SwitchLoaderModel: ObservableObject {
         if let path = UserDefaults.standard.string(forKey: Self.rcmPayloadDirectoryDefaultsKey), !path.isEmpty {
             rcmPayloadDirectory = URL(fileURLWithPath: path, isDirectory: true)
         }
+
+        startRCMMonitor()
+    }
+
+    deinit {
+        rcmMonitorTask?.cancel()
     }
 
     var canStartUSBInstall: Bool {
@@ -77,7 +85,7 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     var canPushRCMPayload: Bool {
-        selectedPayloadURL != nil && status != .running
+        selectedPayloadURL != nil && isRCMDeviceConnected && status != .running
     }
 
     func addFiles(_ urls: [URL]) {
@@ -132,8 +140,15 @@ final class SwitchLoaderModel: ObservableObject {
         selectedPayloadURL = url
         rcmPayloadDirectory = url.deletingLastPathComponent()
         UserDefaults.standard.set(rcmPayloadDirectory?.path, forKey: Self.rcmPayloadDirectoryDefaultsKey)
-        rcmInstruction = "Put the Switch into RCM, connect USB, then push."
+        rcmInstruction = isRCMDeviceConnected ? "RCM detected. Ready to push." : "Put the Switch into RCM, connect USB, then push."
         appendLog("Selected RCM payload \(url.lastPathComponent).", .info)
+    }
+
+    func refreshRCMConnection() {
+        Task {
+            let connected = await Self.detectRCMDevice()
+            setRCMConnection(connected)
+        }
     }
 
     func removeFiles(at offsets: IndexSet) {
@@ -317,6 +332,44 @@ final class SwitchLoaderModel: ObservableObject {
 
     private func appendLog(_ message: String, _ level: TransferLogLevel) {
         logs.append(TransferLogEntry(level: level, message: message))
+    }
+
+    private func startRCMMonitor() {
+        rcmMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let connected = await Self.detectRCMDevice()
+                await MainActor.run {
+                    self?.setRCMConnection(connected)
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+        }
+    }
+
+    private nonisolated static func detectRCMDevice() async -> Bool {
+        await Task.detached(priority: .utility) {
+            RCMPayloadLauncher.isRCMDeviceConnected
+        }.value
+    }
+
+    private func setRCMConnection(_ connected: Bool) {
+        guard isRCMDeviceConnected != connected else { return }
+
+        let wasConnected = isRCMDeviceConnected
+        isRCMDeviceConnected = connected
+
+        guard status != .running else { return }
+
+        if connected {
+            if case .failed = status {
+                status = .idle
+            }
+            rcmInstruction = selectedPayloadURL == nil ? "RCM detected. Choose a payload to push." : "RCM detected. Ready to push."
+            appendLog("RCM device detected.", .success)
+        } else if wasConnected {
+            rcmInstruction = selectedPayloadURL == nil ? "Choose a payload .bin file to push over RCM." : "Put the Switch into RCM, connect USB, then push."
+            appendLog("RCM device disconnected.", .warning)
+        }
     }
 
     private nonisolated static func scanLibraryItems(in directory: URL) throws -> [LibraryItem] {

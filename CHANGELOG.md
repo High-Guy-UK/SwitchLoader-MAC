@@ -25,6 +25,7 @@
 - CrystalRCM/fusee-style RCM launcher core with embedded intermezzo stage, device ID read, payload chunk upload, and trigger step.
 - Third-party attribution notice for the CrystalRCM-derived RCM implementation.
 - RCM payload folder persistence so the payload picker reopens in the last used folder after restarting the app.
+- Live RCM connection marker that turns green when a Switch in RCM mode is detected and keeps Push disabled until it is connected.
 
 ### Tests
 

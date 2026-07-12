@@ -36,6 +36,8 @@ struct ContentView: View {
         .onChange(of: selectedTab) { _, newTab in
             if newTab == .library {
                 model.scanLibrary()
+            } else if newTab == .rcm {
+                model.refreshRCMConnection()
             }
         }
     }
@@ -323,8 +325,14 @@ struct ContentView: View {
     private var rcmWorkflow: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 13) {
-                Text("Launch RCM Payload")
-                    .font(.headline)
+                HStack {
+                    Text("Launch RCM Payload")
+                        .font(.headline)
+
+                    Spacer()
+
+                    RCMConnectionBadge(isConnected: model.isRCMDeviceConnected)
+                }
 
                 WorkflowStep(number: 1, title: "Choose payload", detail: "Select a .bin payload such as hekate or fusee.")
                 WorkflowStep(number: 2, title: "Set RCM mode", detail: "Power the device into RCM before connecting USB.")
@@ -370,6 +378,7 @@ struct ContentView: View {
                     Text("Payload")
                         .font(.headline)
                     Spacer()
+                    RCMConnectionBadge(isConnected: model.isRCMDeviceConnected)
                     Text(model.selectedPayloadURL == nil ? "0" : "1")
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -569,6 +578,19 @@ private struct LibraryTypePill: View {
             .padding(.vertical, 3)
             .background(type.tint.opacity(0.16), in: Capsule())
             .foregroundStyle(type.tint)
+    }
+}
+
+private struct RCMConnectionBadge: View {
+    let isConnected: Bool
+
+    var body: some View {
+        Label(isConnected ? "RCM Connected" : "Waiting for RCM", systemImage: isConnected ? "bolt.fill" : "bolt.slash")
+            .font(.caption)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background((isConnected ? Color.green : Color.gray).opacity(0.14), in: Capsule())
+            .foregroundStyle(isConnected ? .green : .secondary)
     }
 }
 
