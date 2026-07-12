@@ -26,6 +26,9 @@
 - Third-party attribution notice for the CrystalRCM-derived RCM implementation.
 - RCM payload folder persistence so the payload picker reopens in the last used folder after restarting the app.
 - Live RCM connection marker that turns green when a Switch in RCM mode is detected and keeps Push disabled until it is connected.
+- Corrected the RCM upload endpoint for libusb so payload writes use endpoint `0x01` instead of the IOKit pipe index.
+- RCM launch diagnostics now log the discovered bulk endpoints, prepared payload size, chunk count, and trigger length.
+- RCM launches now verify that the device leaves RCM mode before reporting success.
 
 ### Tests
 

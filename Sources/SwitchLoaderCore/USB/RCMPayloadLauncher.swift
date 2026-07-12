@@ -6,6 +6,7 @@ public enum RCMPayloadError: LocalizedError, Equatable {
     case badDeviceID
     case payloadTooLarge(bytesOver: Int)
     case exploitDidNotTrigger
+    case deviceStillInRCM
 
     public var errorDescription: String? {
         switch self {
@@ -19,13 +20,15 @@ public enum RCMPayloadError: LocalizedError, Equatable {
             "The payload is too large for RCM by \(bytesOver) byte\(bytesOver == 1 ? "" : "s")."
         case .exploitDidNotTrigger:
             "The RCM trigger unexpectedly returned successfully, so the payload probably did not launch."
+        case .deviceStillInRCM:
+            "The payload was uploaded, but the Switch stayed in RCM mode after the launch trigger."
         }
     }
 }
 
 public final class RCMPayloadLauncher {
-    private static let inEndpoint: UInt8 = 0x81
-    private static let outEndpoint: UInt8 = 0x02
+    private static let fallbackInEndpoint: UInt8 = 0x81
+    private static let fallbackOutEndpoint: UInt8 = 0x01
     private static let chunkSize = 0x1000
     private static let rcmPayloadAddress: UInt32 = 0x4001_0000
     private static let payloadStartAddress: UInt32 = 0x4001_0E40
@@ -60,24 +63,42 @@ public final class RCMPayloadLauncher {
             connection.close()
         }
 
-        let deviceID = try readDeviceID(connection: connection)
+        let endpoints = connection.bulkEndpoints() ?? USBBulkEndpoints(
+            inEndpoint: Self.fallbackInEndpoint,
+            outEndpoint: Self.fallbackOutEndpoint
+        )
+        emit(
+            "RCM endpoints: IN \(Self.hex(endpoints.inEndpoint)), OUT \(Self.hex(endpoints.outEndpoint)).",
+            .info,
+            onEvent
+        )
+
+        let deviceID = try readDeviceID(connection: connection, endpoint: endpoints.inEndpoint)
         emit("RCM device connected: \(deviceID.map { String(format: "%02x", $0) }.joined()).", .success, onEvent)
         onEvent(.progress(0.1))
 
         let exploitPayload = try Self.exploitPayload(for: payloadData)
-        emit("Prepared \(payloadURL.lastPathComponent) for RCM.", .success, onEvent)
+        emit(
+            "Prepared \(payloadURL.lastPathComponent) for RCM: \(exploitPayload.count) bytes, \(exploitPayload.count / Self.chunkSize) chunks.",
+            .success,
+            onEvent
+        )
         onEvent(.progress(0.4))
 
-        try write(exploitPayload, connection: connection) { progress in
+        try write(exploitPayload, connection: connection, endpoint: endpoints.outEndpoint) { progress in
             onEvent(.progress(0.4 + progress * 0.35))
         }
 
         emit("Payload uploaded. Switching buffers.", .info, onEvent)
-        try switchToHighBuffer(connection: connection)
+        try switchToHighBuffer(connection: connection, endpoint: endpoints.outEndpoint)
         onEvent(.progress(0.8))
 
         emit("Triggering RCM launch.", .info, onEvent)
-        try triggerVulnerability(connection: connection)
+        try triggerVulnerability(connection: connection, onEvent: onEvent)
+        Thread.sleep(forTimeInterval: 0.75)
+        guard !Self.isRCMDeviceConnected else {
+            throw RCMPayloadError.deviceStillInRCM
+        }
         onEvent(.progress(1))
         emit("RCM payload launched.", .success, onEvent)
         onEvent(.completed)
@@ -122,8 +143,8 @@ public final class RCMPayloadLauncher {
         return Data(exploit)
     }
 
-    private func readDeviceID(connection: USBDeviceConnection) throws -> [UInt8] {
-        let data = try connection.bulkRead(endpoint: Self.inEndpoint, maxLength: 16, timeout: 1_000)
+    private func readDeviceID(connection: USBDeviceConnection, endpoint: UInt8) throws -> [UInt8] {
+        let data = try connection.bulkRead(endpoint: endpoint, maxLength: 16, timeout: 1_000)
         let deviceID = [UInt8](data)
         guard !deviceID.isEmpty, !deviceID.allSatisfy({ $0 == 0 }) else {
             throw RCMPayloadError.badDeviceID
@@ -134,20 +155,21 @@ public final class RCMPayloadLauncher {
     private func write(
         _ data: Data,
         connection: USBDeviceConnection,
+        endpoint: UInt8,
         onProgress: (Double) -> Void
     ) throws {
         var offset = 0
         while offset < data.count {
             let end = min(offset + Self.chunkSize, data.count)
-            try writeSingleBuffer(Data(data[offset..<end]), connection: connection)
+            try writeSingleBuffer(Data(data[offset..<end]), connection: connection, endpoint: endpoint)
             offset = end
             onProgress(Double(offset) / Double(data.count))
         }
     }
 
-    private func writeSingleBuffer(_ data: Data, connection: USBDeviceConnection) throws {
+    private func writeSingleBuffer(_ data: Data, connection: USBDeviceConnection, endpoint: UInt8) throws {
         toggleBuffer()
-        try connection.bulkWrite(endpoint: Self.outEndpoint, data: data, timeout: 1_000)
+        try connection.bulkWrite(endpoint: endpoint, data: data, timeout: 1_000)
     }
 
     private func toggleBuffer() {
@@ -158,13 +180,17 @@ public final class RCMPayloadLauncher {
         Self.copyBufferAddresses[currentBuffer]
     }
 
-    private func switchToHighBuffer(connection: USBDeviceConnection) throws {
+    private func switchToHighBuffer(connection: USBDeviceConnection, endpoint: UInt8) throws {
         guard currentBufferAddress != Self.copyBufferAddresses[1] else { return }
-        try write(Data(repeating: 0, count: Self.chunkSize), connection: connection) { _ in }
+        try write(Data(repeating: 0, count: Self.chunkSize), connection: connection, endpoint: endpoint) { _ in }
     }
 
-    private func triggerVulnerability(connection: USBDeviceConnection) throws {
+    private func triggerVulnerability(
+        connection: USBDeviceConnection,
+        onEvent: @escaping @Sendable (USBInstallEvent) -> Void
+    ) throws {
         let length = Self.stackEnd - currentBufferAddress
+        emit("RCM trigger length: \(Self.hex(length)).", .info, onEvent)
         do {
             _ = try connection.controlRead(
                 requestType: 0x82,
@@ -179,6 +205,14 @@ public final class RCMPayloadLauncher {
         }
 
         throw RCMPayloadError.exploitDidNotTrigger
+    }
+
+    private static func hex(_ value: Int) -> String {
+        "0x" + String(value, radix: 16, uppercase: true)
+    }
+
+    private static func hex(_ value: UInt8) -> String {
+        "0x" + String(value, radix: 16, uppercase: true)
     }
 
     private func emit(

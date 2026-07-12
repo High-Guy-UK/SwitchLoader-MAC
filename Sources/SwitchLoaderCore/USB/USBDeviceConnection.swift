@@ -1,6 +1,11 @@
 import CLibUSB
 import Foundation
 
+struct USBBulkEndpoints {
+    let inEndpoint: UInt8
+    let outEndpoint: UInt8
+}
+
 final class USBDeviceConnection {
     private static let homebrewVendorID: UInt16 = 0x057E
     private static let homebrewProductID: UInt16 = 0x3000
@@ -142,6 +147,52 @@ final class USBDeviceConnection {
         }
 
         return Data(buffer.prefix(Int(transferred)))
+    }
+
+    func bulkEndpoints() -> USBBulkEndpoints? {
+        guard let handle, let device = libusb_get_device(handle) else {
+            return nil
+        }
+
+        var configPointer: UnsafeMutablePointer<libusb_config_descriptor>?
+        let result = libusb_get_active_config_descriptor(device, &configPointer)
+        guard result == LIBUSB_SUCCESS.rawValue, let configPointer else {
+            return nil
+        }
+        defer {
+            libusb_free_config_descriptor(configPointer)
+        }
+
+        let config = configPointer.pointee
+        var inEndpoint: UInt8?
+        var outEndpoint: UInt8?
+
+        for interfaceIndex in 0..<Int(config.bNumInterfaces) {
+            let interface = config.interface[interfaceIndex]
+            for alternateIndex in 0..<Int(interface.num_altsetting) {
+                let alternate = interface.altsetting[alternateIndex]
+                for endpointIndex in 0..<Int(alternate.bNumEndpoints) {
+                    let endpoint = alternate.endpoint[endpointIndex]
+                    let transferType = endpoint.bmAttributes & 0x03
+                    guard transferType == 0x02 else { continue }
+
+                    if endpoint.bEndpointAddress & 0x80 == 0x80 {
+                        inEndpoint = endpoint.bEndpointAddress
+                    } else {
+                        outEndpoint = endpoint.bEndpointAddress
+                    }
+
+                    if let inEndpoint, let outEndpoint {
+                        return USBBulkEndpoints(inEndpoint: inEndpoint, outEndpoint: outEndpoint)
+                    }
+                }
+            }
+        }
+
+        guard let inEndpoint, let outEndpoint else {
+            return nil
+        }
+        return USBBulkEndpoints(inEndpoint: inEndpoint, outEndpoint: outEndpoint)
     }
 
     func controlRead(
