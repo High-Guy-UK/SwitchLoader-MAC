@@ -99,6 +99,7 @@ struct GameMetadataCacheEntry: Codable, Hashable, Sendable {
     let provider: String
     let state: MetadataLookupState
     let attemptedAt: Date
+    let lookupPlatformID: Int?
     let metadata: GameMetadata?
     let message: String?
 }
@@ -241,6 +242,7 @@ final class SwitchLoaderModel: ObservableObject {
                                 provider: metadata.provider,
                                 state: .success,
                                 attemptedAt: Date(),
+                                lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
                                 metadata: metadata,
                                 message: nil
                             )
@@ -256,8 +258,9 @@ final class SwitchLoaderModel: ObservableObject {
                                 provider: "TheGamesDB",
                                 state: .noMatch,
                                 attemptedAt: Date(),
+                                lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
                                 metadata: nil,
-                                message: "No TGDB match found."
+                                message: "No Nintendo Switch TGDB match found."
                             )
                         }
                     } catch {
@@ -266,6 +269,7 @@ final class SwitchLoaderModel: ObservableObject {
                             provider: "TheGamesDB",
                             state: .failed,
                             attemptedAt: Date(),
+                            lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
                             metadata: nil,
                             message: error.localizedDescription
                         )
@@ -753,20 +757,12 @@ final class SwitchLoaderModel: ObservableObject {
     private nonisolated static func loadMetadataCache() -> [String: GameMetadataCacheEntry] {
         guard let data = try? Data(contentsOf: metadataCacheURL) else { return [:] }
         if let cache = try? JSONDecoder().decode([String: GameMetadataCacheEntry].self, from: data) {
-            return cache
+            return cache.filter { _, entry in
+                entry.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+            }
         }
 
-        let legacyCache = (try? JSONDecoder().decode([String: GameMetadata].self, from: data)) ?? [:]
-        return legacyCache.mapValues { metadata in
-            GameMetadataCacheEntry(
-                title: metadata.matchedTitle,
-                provider: metadata.provider,
-                state: .success,
-                attemptedAt: Date.distantPast,
-                metadata: metadata,
-                message: "Migrated from older metadata cache."
-            )
-        }
+        return [:]
     }
 
     private nonisolated static func saveMetadataCache(_ cache: [String: GameMetadataCacheEntry]) throws {
@@ -826,6 +822,8 @@ final class SwitchLoaderModel: ObservableObject {
 }
 
 private struct TheGamesDBMetadataProvider: Sendable {
+    static let nintendoSwitchPlatformID = 4971
+
     let apiKey: String
 
     func metadata(for title: String) async throws -> GameMetadata? {
@@ -854,7 +852,9 @@ private struct TheGamesDBMetadataProvider: Sendable {
         }
         components.queryItems = [
             URLQueryItem(name: "apikey", value: apiKey),
-            URLQueryItem(name: "name", value: title)
+            URLQueryItem(name: "name", value: title),
+            URLQueryItem(name: "fields", value: "overview,genres,developers,publishers,platform"),
+            URLQueryItem(name: "filter[platform]", value: String(Self.nintendoSwitchPlatformID))
         ]
         guard let url = components.url else { return nil }
 
@@ -865,7 +865,11 @@ private struct TheGamesDBMetadataProvider: Sendable {
             return nil
         }
 
-        return games.compactMap(RemoteGame.init(dictionary:)).max { lhs, rhs in
+        let switchGames = games
+            .compactMap(RemoteGame.init(dictionary:))
+            .filter(\.isNintendoSwitchRelease)
+
+        return switchGames.max { lhs, rhs in
             score(lhs.name, against: title) < score(rhs.name, against: title)
         }
     }
@@ -934,6 +938,16 @@ private struct TheGamesDBMetadataProvider: Sendable {
         let genres: [String]
         let developers: [String]
         let publishers: [String]
+        let platformIDs: Set<Int>
+        let platformNames: Set<String>
+
+        var isNintendoSwitchRelease: Bool {
+            platformIDs.contains(TheGamesDBMetadataProvider.nintendoSwitchPlatformID)
+                || platformNames.contains { name in
+                    name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+                        .localizedCaseInsensitiveContains("nintendo switch")
+                }
+        }
 
         init?(dictionary: [String: Any]) {
             guard let id = dictionary["id"] as? Int,
@@ -949,6 +963,11 @@ private struct TheGamesDBMetadataProvider: Sendable {
             self.genres = Self.stringList(from: dictionary["genres"])
             self.developers = Self.stringList(from: dictionary["developers"])
             self.publishers = Self.stringList(from: dictionary["publishers"])
+            let platform = Self.platformValues(from: dictionary["platform"])
+            let platformID = Self.platformValues(from: dictionary["platform_id"])
+            let platforms = Self.platformValues(from: dictionary["platforms"])
+            self.platformIDs = platform.ids.union(platformID.ids).union(platforms.ids)
+            self.platformNames = platform.names.union(platformID.names).union(platforms.names)
         }
 
         private static func stringList(from value: Any?) -> [String] {
@@ -959,6 +978,38 @@ private struct TheGamesDBMetadataProvider: Sendable {
                 return values.compactMap { $0 as? String }
             }
             return []
+        }
+
+        private static func platformValues(from value: Any?) -> (ids: Set<Int>, names: Set<String>) {
+            var ids = Set<Int>()
+            var names = Set<String>()
+
+            func read(_ value: Any?) {
+                switch value {
+                case let int as Int:
+                    ids.insert(int)
+                case let number as NSNumber:
+                    ids.insert(number.intValue)
+                case let string as String:
+                    if let int = Int(string) {
+                        ids.insert(int)
+                    } else if !string.isEmpty {
+                        names.insert(string)
+                    }
+                case let values as [Any]:
+                    values.forEach(read)
+                case let dictionary as [String: Any]:
+                    read(dictionary["id"])
+                    read(dictionary["platform_id"])
+                    read(dictionary["name"])
+                    read(dictionary["platform_name"])
+                default:
+                    break
+                }
+            }
+
+            read(value)
+            return (ids, names)
         }
     }
 
