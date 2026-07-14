@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import SwitchLoaderCore
 
 enum LibraryContentType: Hashable, Sendable {
@@ -31,6 +32,58 @@ struct LibraryItem: Identifiable, Hashable, Sendable {
     }
 }
 
+struct LibraryGame: Identifiable, Hashable, Sendable {
+    let id: String
+    let title: String
+    var items: [LibraryItem]
+    var metadata: GameMetadata?
+
+    var mainGames: [LibraryItem] {
+        items.filter { $0.contentType == .mainGame }
+    }
+
+    var updates: [LibraryItem] {
+        items.filter { $0.contentType == .update }
+    }
+
+    var dlcs: [LibraryItem] {
+        items.filter { $0.contentType == .dlc }
+    }
+
+    var others: [LibraryItem] {
+        items.filter { $0.contentType == .other }
+    }
+
+    var installOrderedItems: [LibraryItem] {
+        items.sorted {
+            if $0.contentType.sortRank != $1.contentType.sortRank {
+                return $0.contentType.sortRank < $1.contentType.sortRank
+            }
+            return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    var heroImageURL: URL? {
+        metadata?.bannerImageURL ?? metadata?.artworkImageURL ?? metadata?.screenshotImageURLs.first ?? metadata?.coverImageURL
+    }
+}
+
+struct GameMetadata: Codable, Hashable, Sendable {
+    let provider: String
+    let providerID: String
+    let matchedTitle: String
+    let summary: String?
+    let releaseDate: String?
+    let genres: [String]
+    let developers: [String]
+    let publishers: [String]
+    let bannerImageURL: URL?
+    let artworkImageURL: URL?
+    let coverImageURL: URL?
+    let logoImageURL: URL?
+    let screenshotImageURLs: [URL]
+}
+
 @MainActor
 final class SwitchLoaderModel: ObservableObject {
     @Published var selectedFiles: [URL] = []
@@ -41,16 +94,23 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var lastOutputURL: URL?
     @Published var libraryDirectory: URL?
     @Published var libraryItems: [LibraryItem] = []
+    @Published var libraryGames: [LibraryGame] = []
     @Published var isScanningLibrary = false
+    @Published var isFetchingMetadata = false
     @Published var libraryMessage = "Choose your NSP/XCI folder to build the library."
+    @Published var metadataMessage = "Add a TGDB API key to fetch artwork and game details."
+    @Published var hasTheGamesDBAPIKey = false
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
     @Published var selectedPayloadURL: URL?
     @Published var rcmPayloadDirectory: URL?
     @Published var isRCMDeviceConnected = false
     @Published var rcmInstruction = "Choose a payload .bin file to push over RCM."
 
-    private static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
-    private static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
+    private nonisolated static let libraryDirectoryDefaultsKey = "SwitchLoader.libraryDirectory"
+    private nonisolated static let libraryDirectoryBookmarkDefaultsKey = "SwitchLoader.libraryDirectoryBookmark"
+    private nonisolated static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
+    private nonisolated static let gamesDBKeychainService = "SwitchLoader.TheGamesDB"
+    private nonisolated static let gamesDBKeychainAccount = "apiKey"
     private var rcmMonitorTask: Task<Void, Never>?
     private var suppressNextRCMDisconnectLog = false
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
@@ -65,8 +125,8 @@ final class SwitchLoaderModel: ObservableObject {
     ]
 
     init() {
-        if let path = UserDefaults.standard.string(forKey: Self.libraryDirectoryDefaultsKey), !path.isEmpty {
-            libraryDirectory = URL(fileURLWithPath: path, isDirectory: true)
+        if let url = Self.restoreLibraryDirectory() {
+            libraryDirectory = url
             libraryMessage = "Library ready to scan."
         }
 
@@ -74,7 +134,13 @@ final class SwitchLoaderModel: ObservableObject {
             rcmPayloadDirectory = URL(fileURLWithPath: path, isDirectory: true)
         }
 
+        hasTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()?.isEmpty == false
+        metadataMessage = hasTheGamesDBAPIKey ? "Metadata ready." : "Add a TGDB API key to fetch artwork and game details."
         startRCMMonitor()
+
+        if libraryDirectory != nil {
+            scanLibrary()
+        }
     }
 
     deinit {
@@ -98,7 +164,7 @@ final class SwitchLoaderModel: ObservableObject {
 
     func setLibraryDirectory(_ url: URL) {
         libraryDirectory = url
-        UserDefaults.standard.set(url.path, forKey: Self.libraryDirectoryDefaultsKey)
+        persistLibraryDirectory(url)
         appendLog("Library folder set to \(url.path).", .info)
         scanLibrary()
     }
@@ -106,26 +172,61 @@ final class SwitchLoaderModel: ObservableObject {
     func scanLibrary() {
         guard let libraryDirectory else {
             libraryItems = []
+            libraryGames = []
             libraryMessage = "Choose your NSP/XCI folder to build the library."
             return
         }
 
         isScanningLibrary = true
         libraryMessage = "Scanning library..."
+        let apiKey = Self.loadTheGamesDBAPIKey()
 
         Task.detached(priority: .userInitiated) { [libraryDirectory] in
             do {
                 let items = try Self.scanLibraryItems(in: libraryDirectory)
+                let cache = Self.loadMetadataCache()
+                let games = Self.groupLibraryGames(from: items, cache: cache)
                 await MainActor.run {
                     self.libraryItems = items
+                    self.libraryGames = games
                     self.isScanningLibrary = false
-                    self.libraryMessage = items.isEmpty ? "No install files found in this folder." : "Found \(items.count) item\(items.count == 1 ? "" : "s")."
-                    self.appendLog("Library scan found \(items.count) item\(items.count == 1 ? "" : "s").", .success)
+                    self.libraryMessage = items.isEmpty ? "No install files found in this folder." : "Found \(games.count) game\(games.count == 1 ? "" : "s") and \(items.count) install item\(items.count == 1 ? "" : "s")."
+                    self.appendLog("Library scan found \(games.count) game\(games.count == 1 ? "" : "s").", .success)
+                }
+
+                guard let apiKey, !apiKey.isEmpty, !games.isEmpty else { return }
+
+                await MainActor.run {
+                    self.isFetchingMetadata = true
+                    self.metadataMessage = "Fetching game artwork and details..."
+                }
+
+                var updatedCache = cache
+                let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
+                for game in games where updatedCache[game.id] == nil {
+                    if let metadata = try await provider.metadata(for: game.title) {
+                        updatedCache[game.id] = metadata
+                        let gameID = game.id
+                        await MainActor.run {
+                            if let index = self.libraryGames.firstIndex(where: { $0.id == gameID }) {
+                                self.libraryGames[index].metadata = metadata
+                            }
+                        }
+                    }
+                }
+
+                try? Self.saveMetadataCache(updatedCache)
+                await MainActor.run {
+                    let enrichedCount = self.libraryGames.filter { $0.metadata != nil }.count
+                    self.isFetchingMetadata = false
+                    self.metadataMessage = enrichedCount == 0 ? "No TGDB matches found yet." : "Artwork/details cached for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s")."
                 }
             } catch {
                 await MainActor.run {
                     self.libraryItems = []
+                    self.libraryGames = []
                     self.isScanningLibrary = false
+                    self.isFetchingMetadata = false
                     self.libraryMessage = error.localizedDescription
                     self.appendLog(error.localizedDescription, .failure)
                 }
@@ -134,7 +235,37 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     func addLibraryToQueue() {
-        addFiles(libraryItems.map(\.url))
+        addFiles(libraryGames.flatMap(\.installOrderedItems).map(\.url))
+        appendLog("Queued library items in main game, update, DLC order.", .warning)
+    }
+
+    func addGameToQueue(_ game: LibraryGame, contentType: LibraryContentType? = nil) {
+        let items = contentType.map { type in
+            game.items.filter { $0.contentType == type }
+        } ?? game.installOrderedItems
+
+        addFiles(items.sorted {
+            if $0.contentType.sortRank != $1.contentType.sortRank {
+                return $0.contentType.sortRank < $1.contentType.sortRank
+            }
+            return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
+        }.map(\.url))
+
+        if contentType == nil || contentType == .update || contentType == .dlc {
+            appendLog("Install main games before updates or DLC. Queue all uses the safe order.", .warning)
+        }
+    }
+
+    func saveTheGamesDBAPIKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.saveTheGamesDBAPIKey(trimmed.isEmpty ? nil : trimmed)
+        hasTheGamesDBAPIKey = !trimmed.isEmpty
+        metadataMessage = hasTheGamesDBAPIKey ? "TGDB key saved. Refresh library to fetch artwork." : "Add a TGDB API key to fetch artwork and game details."
+        appendLog(hasTheGamesDBAPIKey ? "TGDB API key saved." : "TGDB API key cleared.", .info)
+    }
+
+    func refreshLibraryMetadata() {
+        scanLibrary()
     }
 
     func setRCMPayload(_ url: URL) {
@@ -380,6 +511,13 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     private nonisolated static func scanLibraryItems(in directory: URL) throws -> [LibraryItem] {
+        let didAccess = directory.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                directory.stopAccessingSecurityScopedResource()
+            }
+        }
+
         let fileManager = FileManager.default
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey]
         guard let enumerator = fileManager.enumerator(
@@ -472,6 +610,310 @@ final class SwitchLoaderModel: ObservableObject {
 
         return contents.contains { child in
             child.lastPathComponent.range(of: #"^\d\d$"#, options: .regularExpression) != nil
+        }
+    }
+
+    private func persistLibraryDirectory(_ url: URL) {
+        UserDefaults.standard.set(url.path, forKey: Self.libraryDirectoryDefaultsKey)
+
+        if let bookmark = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) {
+            UserDefaults.standard.set(bookmark, forKey: Self.libraryDirectoryBookmarkDefaultsKey)
+        }
+    }
+
+    private nonisolated static func restoreLibraryDirectory() -> URL? {
+        if let bookmark = UserDefaults.standard.data(forKey: libraryDirectoryBookmarkDefaultsKey) {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                if isStale, let freshBookmark = try? url.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                ) {
+                    UserDefaults.standard.set(freshBookmark, forKey: libraryDirectoryBookmarkDefaultsKey)
+                }
+                return url
+            }
+        }
+
+        if let path = UserDefaults.standard.string(forKey: libraryDirectoryDefaultsKey), !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+
+        return nil
+    }
+
+    private nonisolated static func groupLibraryGames(
+        from items: [LibraryItem],
+        cache: [String: GameMetadata]
+    ) -> [LibraryGame] {
+        let grouped = Dictionary(grouping: items) { stableGameID(for: $0.title) }
+        return grouped.map { id, items in
+            let sortedItems = items.sorted {
+                if $0.contentType.sortRank != $1.contentType.sortRank {
+                    return $0.contentType.sortRank < $1.contentType.sortRank
+                }
+                return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
+            }
+            let title = sortedItems.first?.title ?? id
+            return LibraryGame(id: id, title: title, items: sortedItems, metadata: cache[id])
+        }
+        .sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    private nonisolated static func stableGameID(for title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .replacingOccurrences(of: #"[^a-zA-Z0-9]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .lowercased()
+    }
+
+    private nonisolated static func loadMetadataCache() -> [String: GameMetadata] {
+        guard let data = try? Data(contentsOf: metadataCacheURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: GameMetadata].self, from: data)) ?? [:]
+    }
+
+    private nonisolated static func saveMetadataCache(_ cache: [String: GameMetadata]) throws {
+        let url = metadataCacheURL
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(cache)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private nonisolated static var metadataCacheURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("SwitchLoader", isDirectory: true)
+            .appendingPathComponent("LibraryMetadataCache.json")
+    }
+
+    private nonisolated static func loadTheGamesDBAPIKey() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: gamesDBKeychainService,
+            kSecAttrAccount as String: gamesDBKeychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let key = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        return key
+    }
+
+    private nonisolated static func saveTheGamesDBAPIKey(_ key: String?) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: gamesDBKeychainService,
+            kSecAttrAccount as String: gamesDBKeychainAccount
+        ]
+
+        SecItemDelete(query as CFDictionary)
+
+        guard let key, !key.isEmpty, let data = key.data(using: .utf8) else { return }
+
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: gamesDBKeychainService,
+            kSecAttrAccount as String: gamesDBKeychainAccount,
+            kSecValueData as String: data
+        ]
+        SecItemAdd(item as CFDictionary, nil)
+    }
+}
+
+private struct TheGamesDBMetadataProvider: Sendable {
+    let apiKey: String
+
+    func metadata(for title: String) async throws -> GameMetadata? {
+        guard let game = try await findGame(named: title) else { return nil }
+        let images = try await loadImages(for: game.id)
+        return GameMetadata(
+            provider: "TheGamesDB",
+            providerID: String(game.id),
+            matchedTitle: game.name,
+            summary: game.overview,
+            releaseDate: game.releaseDate,
+            genres: game.genres,
+            developers: game.developers,
+            publishers: game.publishers,
+            bannerImageURL: images.preferredURL(types: ["banner", "fanart", "screenshot"]),
+            artworkImageURL: images.preferredURL(types: ["fanart", "screenshot"]),
+            coverImageURL: images.preferredURL(types: ["boxart"]),
+            logoImageURL: images.preferredURL(types: ["clearlogo", "logo"]),
+            screenshotImageURLs: images.urls(types: ["screenshot", "fanart"])
+        )
+    }
+
+    private func findGame(named title: String) async throws -> RemoteGame? {
+        guard var components = URLComponents(string: "https://api.thegamesdb.net/v1/Games/ByGameName") else {
+            return nil
+        }
+        components.queryItems = [
+            URLQueryItem(name: "apikey", value: apiKey),
+            URLQueryItem(name: "name", value: title)
+        ]
+        guard let url = components.url else { return nil }
+
+        let object = try await jsonObject(from: url)
+        guard let data = object["data"] as? [String: Any],
+              let games = data["games"] as? [[String: Any]]
+        else {
+            return nil
+        }
+
+        return games.compactMap(RemoteGame.init(dictionary:)).max { lhs, rhs in
+            score(lhs.name, against: title) < score(rhs.name, against: title)
+        }
+    }
+
+    private func loadImages(for gameID: Int) async throws -> RemoteImages {
+        guard var components = URLComponents(string: "https://api.thegamesdb.net/v1/Games/Images") else {
+            return RemoteImages(baseURLs: [:], images: [])
+        }
+        components.queryItems = [
+            URLQueryItem(name: "apikey", value: apiKey),
+            URLQueryItem(name: "games_id", value: String(gameID))
+        ]
+        guard let url = components.url else { return RemoteImages(baseURLs: [:], images: []) }
+
+        let object = try await jsonObject(from: url)
+        guard let data = object["data"] as? [String: Any] else {
+            return RemoteImages(baseURLs: [:], images: [])
+        }
+
+        let baseURLs = data["base_url"] as? [String: String] ?? [:]
+        var images: [RemoteImage] = []
+        if let imageGroups = data["images"] as? [String: [[String: Any]]] {
+            images = imageGroups[String(gameID)]?.compactMap(RemoteImage.init(dictionary:)) ?? []
+        } else if let imageGroups = data["images"] as? [String: [Any]],
+                  let group = imageGroups[String(gameID)] {
+            images = group.compactMap { ($0 as? [String: Any]).flatMap(RemoteImage.init(dictionary:)) }
+        }
+
+        return RemoteImages(baseURLs: baseURLs, images: images)
+    }
+
+    private func jsonObject(from url: URL) async throws -> [String: Any] {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        return (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    private func score(_ candidate: String, against title: String) -> Double {
+        let lhs = normalized(candidate)
+        let rhs = normalized(title)
+        if lhs == rhs { return 1 }
+        if lhs.contains(rhs) || rhs.contains(lhs) { return 0.85 }
+        let lhsTokens = Set(lhs.split(separator: " "))
+        let rhsTokens = Set(rhs.split(separator: " "))
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        let shared = lhsTokens.intersection(rhsTokens).count
+        return Double(shared) / Double(max(lhsTokens.count, rhsTokens.count))
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .replacingOccurrences(of: #"[^a-zA-Z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private struct RemoteGame {
+        let id: Int
+        let name: String
+        let overview: String?
+        let releaseDate: String?
+        let genres: [String]
+        let developers: [String]
+        let publishers: [String]
+
+        init?(dictionary: [String: Any]) {
+            guard let id = dictionary["id"] as? Int,
+                  let name = dictionary["game_title"] as? String ?? dictionary["name"] as? String
+            else {
+                return nil
+            }
+
+            self.id = id
+            self.name = name
+            self.overview = dictionary["overview"] as? String
+            self.releaseDate = dictionary["release_date"] as? String
+            self.genres = Self.stringList(from: dictionary["genres"])
+            self.developers = Self.stringList(from: dictionary["developers"])
+            self.publishers = Self.stringList(from: dictionary["publishers"])
+        }
+
+        private static func stringList(from value: Any?) -> [String] {
+            if let values = value as? [String] {
+                return values
+            }
+            if let values = value as? [Any] {
+                return values.compactMap { $0 as? String }
+            }
+            return []
+        }
+    }
+
+    private struct RemoteImage {
+        let type: String
+        let filename: String
+
+        init?(dictionary: [String: Any]) {
+            guard let type = dictionary["type"] as? String,
+                  let filename = dictionary["filename"] as? String
+            else {
+                return nil
+            }
+
+            self.type = type.lowercased()
+            self.filename = filename
+        }
+    }
+
+    private struct RemoteImages {
+        let baseURLs: [String: String]
+        let images: [RemoteImage]
+
+        func preferredURL(types: [String]) -> URL? {
+            urls(types: types).first
+        }
+
+        func urls(types: [String]) -> [URL] {
+            let wanted = types.map { $0.lowercased() }
+            return images
+                .filter { wanted.contains($0.type) }
+                .compactMap { url(for: $0) }
+        }
+
+        private func url(for image: RemoteImage) -> URL? {
+            let base = baseURLs["original"] ?? baseURLs["large"] ?? baseURLs["medium"] ?? baseURLs.values.first
+            guard let base else { return nil }
+            let separator = base.hasSuffix("/") ? "" : "/"
+            return URL(string: base + separator + image.filename)
         }
     }
 }

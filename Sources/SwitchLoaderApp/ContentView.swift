@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var model: SwitchLoaderModel
     @State private var selectedTab = AppTab.workflow
+    @State private var selectedLibraryGame: LibraryGame?
+    @State private var isShowingMetadataSettings = false
+    @State private var metadataAPIKey = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +42,22 @@ struct ContentView: View {
             } else if newTab == .rcm {
                 model.refreshRCMConnection()
             }
+        }
+        .sheet(item: $selectedLibraryGame) { game in
+            LibraryGameDetailSheet(game: game) {
+                selectedLibraryGame = nil
+            }
+            .environmentObject(model)
+            .frame(minWidth: 760, minHeight: 560)
+        }
+        .sheet(isPresented: $isShowingMetadataSettings) {
+            MetadataSettingsSheet(apiKey: $metadataAPIKey) {
+                model.saveTheGamesDBAPIKey(metadataAPIKey)
+                isShowingMetadataSettings = false
+            } onCancel: {
+                isShowingMetadataSettings = false
+            }
+            .frame(width: 460)
         }
     }
 
@@ -239,6 +258,22 @@ struct ContentView: View {
                 .disabled(model.libraryDirectory == nil || model.isScanningLibrary)
 
                 Button {
+                    metadataAPIKey = ""
+                    isShowingMetadataSettings = true
+                } label: {
+                    Label(model.hasTheGamesDBAPIKey ? "TGDB Connected" : "TGDB Key", systemImage: "photo.on.rectangle.angled")
+                        .frame(maxWidth: .infinity)
+                }
+
+                Button {
+                    model.refreshLibraryMetadata()
+                } label: {
+                    Label(model.isFetchingMetadata ? "Fetching Art" : "Fetch Artwork", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(!model.hasTheGamesDBAPIKey || model.libraryGames.isEmpty || model.isFetchingMetadata)
+
+                Button {
                     model.addLibraryToQueue()
                     selectedTab = .workflow
                 } label: {
@@ -246,12 +281,28 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.libraryItems.isEmpty)
+                .disabled(model.libraryGames.isEmpty)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Install main games before updates or DLC.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.orange)
+                    Text("Game detail buttons can queue all available files in the safest order.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
                 Spacer()
 
                 Text(model.libraryMessage)
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(model.metadataMessage)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -262,60 +313,34 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("Found Files")
+                    Text("Games")
                         .font(.headline)
                     Spacer()
-                    Text("\(model.libraryItems.count)")
+                    Text("\(model.libraryGames.count)")
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
                 .padding(14)
 
-                List {
-                    ForEach(model.libraryItems) { item in
-                        HStack(spacing: 10) {
-                            Image(systemName: item.url.hasDirectoryPath ? "folder" : "doc")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 18)
-
-                            Text(item.title)
-                                .font(.caption.bold())
-                                .lineLimit(1)
-                                .layoutPriority(1)
-
-                            Spacer(minLength: 8)
-
-                            LibraryTypePill(type: item.contentType)
-
-                            Button {
-                                model.addFiles([item.url])
-                            } label: {
-                                Image(systemName: "plus.circle.fill")
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Add to queue")
-                        }
-                        .padding(.vertical, 2)
-                        .help("\(item.url.lastPathComponent)\n\(item.url.path)")
-                        .contextMenu {
-                            Button {
-                                model.addFiles([item.url])
-                            } label: {
-                                Label("Add to Queue", systemImage: "plus")
-                            }
-
-                            Button {
-                                revealInFinder(item.url)
-                            } label: {
-                                Label("Show in Finder", systemImage: "folder")
-                            }
-
-                            Button {
-                                copyPath(item.url)
-                            } label: {
-                                Label("Copy Path", systemImage: "doc.on.doc")
+                if model.libraryGames.isEmpty {
+                    ContentUnavailableView("No Games", systemImage: "books.vertical")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 260, maximum: 360), spacing: 14)],
+                            spacing: 14
+                        ) {
+                            ForEach(model.libraryGames) { game in
+                                LibraryGameTile(game: game) {
+                                    selectedLibraryGame = game
+                                } addAll: {
+                                    model.addGameToQueue(game)
+                                    selectedTab = .workflow
+                                }
                             }
                         }
+                        .padding(14)
                     }
                 }
             }
@@ -578,6 +603,352 @@ private struct LibraryTypePill: View {
             .padding(.vertical, 3)
             .background(type.tint.opacity(0.16), in: Capsule())
             .foregroundStyle(type.tint)
+    }
+}
+
+private struct LibraryGameTile: View {
+    let game: LibraryGame
+    let open: () -> Void
+    let addAll: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            banner
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.78)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                if let logoURL = game.metadata?.logoImageURL {
+                    AsyncImage(url: logoURL) { phase in
+                        if let image = phase.image {
+                            image
+                                .resizable()
+                                .scaledToFit()
+                        } else {
+                            Text(game.metadata?.matchedTitle ?? game.title)
+                                .font(.headline.bold())
+                                .foregroundStyle(.white)
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: 170, maxHeight: 54, alignment: .leading)
+                } else {
+                    Text(game.metadata?.matchedTitle ?? game.title)
+                        .font(.headline.bold())
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: 6) {
+                    if !game.mainGames.isEmpty {
+                        LibraryTypePill(type: .mainGame)
+                    }
+                    if !game.updates.isEmpty {
+                        LibraryTypePill(type: .update)
+                    }
+                    if !game.dlcs.isEmpty {
+                        LibraryTypePill(type: .dlc)
+                    }
+                    if !game.others.isEmpty {
+                        LibraryTypePill(type: .other)
+                    }
+
+                    Spacer()
+
+                    Button(action: addAll) {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.white)
+                    .help("Queue in install order")
+                }
+            }
+            .padding(12)
+        }
+        .frame(height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.white.opacity(0.10))
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture(perform: open)
+        .help(game.metadata?.summary ?? game.title)
+    }
+
+    @ViewBuilder
+    private var banner: some View {
+        if let url = game.heroImageURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    fallbackBanner
+                }
+            }
+        } else {
+            fallbackBanner
+        }
+    }
+
+    private var fallbackBanner: some View {
+        ZStack {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.gray.opacity(0.34), Color.accentColor.opacity(0.28)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Image(systemName: "gamecontroller.fill")
+                .font(.system(size: 42))
+                .foregroundStyle(.white.opacity(0.22))
+        }
+    }
+}
+
+private struct LibraryGameDetailSheet: View {
+    @EnvironmentObject private var model: SwitchLoaderModel
+    let game: LibraryGame
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: close) {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                Spacer()
+                Button(action: close) {
+                    Label("Close", systemImage: "xmark")
+                }
+            }
+            .padding(14)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    hero
+
+                    HStack(alignment: .top, spacing: 18) {
+                        cover
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(game.metadata?.matchedTitle ?? game.title)
+                                .font(.largeTitle.bold())
+                                .lineLimit(2)
+
+                            metadataLine
+
+                            if let summary = game.metadata?.summary, !summary.isEmpty {
+                                Text(summary)
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text("No remote details cached yet. Add a TGDB key and refresh artwork to enrich this game.")
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    warning
+
+                    actionButtons
+
+                    localFiles
+                }
+                .padding(18)
+            }
+        }
+    }
+
+    private var hero: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let url = game.heroImageURL {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Rectangle().fill(Color.gray.opacity(0.22))
+                    }
+                }
+            } else {
+                Rectangle().fill(Color.gray.opacity(0.22))
+            }
+
+            LinearGradient(colors: [.clear, .black.opacity(0.78)], startPoint: .center, endPoint: .bottom)
+
+            Text(game.metadata?.matchedTitle ?? game.title)
+                .font(.title.bold())
+                .foregroundStyle(.white)
+                .padding(18)
+        }
+        .frame(height: 230)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var cover: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.18))
+
+            if let url = game.metadata?.coverImageURL {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Image(systemName: "photo")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 132, height: 184)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        let metadata = game.metadata
+        let genres = metadata?.genres.prefix(3).joined(separator: ", ") ?? ""
+        let release = metadata?.releaseDate ?? ""
+        if !genres.isEmpty || !release.isEmpty {
+            Text([release, genres].filter { !$0.isEmpty }.joined(separator: " • "))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var warning: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Install order matters")
+                    .font(.headline)
+                Text("Install the main game first, then updates, then DLC. The Add All button queues files in that order automatically.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 10) {
+            Button {
+                model.addGameToQueue(game, contentType: .mainGame)
+            } label: {
+                Label("Add Main Game", systemImage: "plus.square")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(game.mainGames.isEmpty)
+
+            Button {
+                model.addGameToQueue(game, contentType: .update)
+            } label: {
+                Label("Add Updates", systemImage: "arrow.triangle.2.circlepath")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(game.updates.isEmpty)
+
+            Button {
+                model.addGameToQueue(game, contentType: .dlc)
+            } label: {
+                Label("Add DLC", systemImage: "square.grid.2x2")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(game.dlcs.isEmpty)
+
+            Button {
+                model.addGameToQueue(game)
+            } label: {
+                Label("Add All", systemImage: "text.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var localFiles: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Local Files")
+                .font(.headline)
+
+            ForEach(game.installOrderedItems) { item in
+                HStack(spacing: 10) {
+                    Image(systemName: item.url.hasDirectoryPath ? "folder" : "doc")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                    LibraryTypePill(type: item.contentType)
+                    Text(item.url.lastPathComponent)
+                        .font(.caption.bold())
+                        .lineLimit(1)
+                    Text("-")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(item.url.deletingLastPathComponent().path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .help(item.url.path)
+            }
+        }
+    }
+}
+
+private struct MetadataSettingsSheet: View {
+    @Binding var apiKey: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("TGDB Artwork")
+                .font(.title2.bold())
+
+            Text("Paste a TheGamesDB API key to fetch banner art, covers, summaries, and release details for games found in your library.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            SecureField("TheGamesDB API key", text: $apiKey)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Clear Key") {
+                    apiKey = ""
+                    onSave()
+                }
+                Button("Save") {
+                    onSave()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
     }
 }
 
