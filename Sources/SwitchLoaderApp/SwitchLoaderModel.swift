@@ -66,6 +66,10 @@ struct LibraryGame: Identifiable, Hashable, Sendable {
     var heroImageURL: URL? {
         metadata?.bannerImageURL ?? metadata?.artworkImageURL ?? metadata?.screenshotImageURLs.first ?? metadata?.coverImageURL
     }
+
+    var posterImageURL: URL? {
+        metadata?.coverImageURL ?? metadata?.artworkImageURL ?? metadata?.bannerImageURL ?? metadata?.screenshotImageURLs.first
+    }
 }
 
 struct GameMetadata: Codable, Hashable, Sendable {

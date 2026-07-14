@@ -326,13 +326,10 @@ struct ContentView: View {
                     ContentUnavailableView("No Games", systemImage: "books.vertical")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 260, maximum: 360), spacing: 14)],
-                            spacing: 14
-                        ) {
+                    HorizontalWheelScrollView {
+                        HStack(alignment: .top, spacing: 18) {
                             ForEach(model.libraryGames) { game in
-                                LibraryGameTile(game: game) {
+                                LibraryGamePoster(game: game) {
                                     selectedLibraryGame = game
                                 } addAll: {
                                     model.addGameToQueue(game)
@@ -340,8 +337,11 @@ struct ContentView: View {
                                 }
                             }
                         }
-                        .padding(14)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 14)
+                        .padding(.bottom, 18)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -606,110 +606,175 @@ private struct LibraryTypePill: View {
     }
 }
 
-private struct LibraryGameTile: View {
+private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> WheelDrivenHorizontalScrollView {
+        let scrollView = WheelDrivenHorizontalScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .legacy
+        scrollView.horizontalScroller?.controlSize = .small
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
+
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.translatesAutoresizingMaskIntoConstraints = true
+        hostingView.autoresizingMask = []
+        scrollView.documentView = hostingView
+        context.coordinator.hostingView = hostingView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: WheelDrivenHorizontalScrollView, context: Context) {
+        context.coordinator.hostingView?.rootView = content
+        context.coordinator.hostingView?.invalidateIntrinsicContentSize()
+        scrollView.needsLayout = true
+    }
+
+    final class Coordinator {
+        var hostingView: NSHostingView<Content>?
+    }
+}
+
+private final class WheelDrivenHorizontalScrollView: NSScrollView {
+    override func layout() {
+        super.layout()
+        guard let documentView else { return }
+
+        let fittingSize = documentView.fittingSize
+        let visibleSize = contentView.bounds.size
+        let width = max(fittingSize.width, visibleSize.width)
+        let height = max(fittingSize.height, visibleSize.height)
+        documentView.setFrameSize(NSSize(width: width, height: height))
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let documentView else {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        let horizontalDelta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            ? event.scrollingDeltaX
+            : -event.scrollingDeltaY
+        let maxX = max(0, documentView.bounds.width - contentView.bounds.width)
+        var origin = contentView.bounds.origin
+        origin.x = min(max(origin.x + horizontalDelta, 0), maxX)
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+    }
+}
+
+private struct LibraryGamePoster: View {
     let game: LibraryGame
     let open: () -> Void
     let addAll: () -> Void
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            banner
+        VStack(alignment: .leading, spacing: 9) {
+            ZStack(alignment: .bottomTrailing) {
+                poster
 
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.78)],
-                startPoint: .center,
-                endPoint: .bottom
-            )
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.46)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
 
-            VStack(alignment: .leading, spacing: 8) {
-                if let logoURL = game.metadata?.logoImageURL {
-                    AsyncImage(url: logoURL) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        } else {
-                            Text(game.metadata?.matchedTitle ?? game.title)
-                                .font(.headline.bold())
-                                .foregroundStyle(.white)
-                                .lineLimit(2)
-                        }
-                    }
-                    .frame(maxWidth: 170, maxHeight: 54, alignment: .leading)
-                } else {
-                    Text(game.metadata?.matchedTitle ?? game.title)
-                        .font(.headline.bold())
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
+                Button(action: addAll) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .symbolRenderingMode(.hierarchical)
                 }
-
-                HStack(spacing: 6) {
-                    if !game.mainGames.isEmpty {
-                        LibraryTypePill(type: .mainGame)
-                    }
-                    if !game.updates.isEmpty {
-                        LibraryTypePill(type: .update)
-                    }
-                    if !game.dlcs.isEmpty {
-                        LibraryTypePill(type: .dlc)
-                    }
-                    if !game.others.isEmpty {
-                        LibraryTypePill(type: .other)
-                    }
-
-                    Spacer()
-
-                    Button(action: addAll) {
-                        Image(systemName: "plus.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.white)
-                    .help("Queue in install order")
-                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.white)
+                .padding(9)
+                .help("Queue in install order")
             }
-            .padding(12)
+            .frame(width: 168, height: 252)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.14))
+            }
+            .shadow(color: .black.opacity(0.26), radius: 10, y: 5)
+
+            Text(game.metadata?.matchedTitle ?? game.title)
+                .font(.callout.bold())
+                .lineLimit(2)
+                .foregroundStyle(.primary)
+                .frame(width: 168, alignment: .leading)
+
+            HStack(spacing: 5) {
+                if !game.mainGames.isEmpty {
+                    LibraryTypePill(type: .mainGame)
+                }
+                if !game.updates.isEmpty {
+                    LibraryTypePill(type: .update)
+                }
+                if !game.dlcs.isEmpty {
+                    LibraryTypePill(type: .dlc)
+                }
+                if !game.others.isEmpty {
+                    LibraryTypePill(type: .other)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(width: 168)
         }
-        .frame(height: 150)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.white.opacity(0.10))
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .frame(width: 168, alignment: .topLeading)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onTapGesture(perform: open)
         .help(game.metadata?.summary ?? game.title)
     }
 
     @ViewBuilder
-    private var banner: some View {
-        if let url = game.heroImageURL {
+    private var poster: some View {
+        if let url = game.posterImageURL {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
                     image
                         .resizable()
                         .scaledToFill()
                 } else {
-                    fallbackBanner
+                    fallbackPoster
                 }
             }
         } else {
-            fallbackBanner
+            fallbackPoster
         }
     }
 
-    private var fallbackBanner: some View {
+    private var fallbackPoster: some View {
         ZStack {
             Rectangle()
                 .fill(
                     LinearGradient(
-                        colors: [Color.gray.opacity(0.34), Color.accentColor.opacity(0.28)],
+                        colors: [Color.gray.opacity(0.34), Color.accentColor.opacity(0.22)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
             Image(systemName: "gamecontroller.fill")
-                .font(.system(size: 42))
-                .foregroundStyle(.white.opacity(0.22))
+                .font(.system(size: 46))
+                .foregroundStyle(.white.opacity(0.20))
+            Text(game.title)
+                .font(.headline.bold())
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+                .padding(14)
+                .foregroundStyle(.white.opacity(0.84))
         }
     }
 }
