@@ -84,6 +84,21 @@ struct GameMetadata: Codable, Hashable, Sendable {
     let screenshotImageURLs: [URL]
 }
 
+enum MetadataLookupState: String, Codable, Hashable, Sendable {
+    case success
+    case noMatch
+    case failed
+}
+
+struct GameMetadataCacheEntry: Codable, Hashable, Sendable {
+    let title: String
+    let provider: String
+    let state: MetadataLookupState
+    let attemptedAt: Date
+    let metadata: GameMetadata?
+    let message: String?
+}
+
 @MainActor
 final class SwitchLoaderModel: ObservableObject {
     @Published var selectedFiles: [URL] = []
@@ -186,40 +201,91 @@ final class SwitchLoaderModel: ObservableObject {
                 let items = try Self.scanLibraryItems(in: libraryDirectory)
                 let cache = Self.loadMetadataCache()
                 let games = Self.groupLibraryGames(from: items, cache: cache)
+                let enrichedCount = games.filter { $0.metadata != nil }.count
+                let untriedGames = games.filter { cache[$0.id] == nil }
                 await MainActor.run {
                     self.libraryItems = items
                     self.libraryGames = games
                     self.isScanningLibrary = false
                     self.libraryMessage = items.isEmpty ? "No install files found in this folder." : "Found \(games.count) game\(games.count == 1 ? "" : "s") and \(items.count) install item\(items.count == 1 ? "" : "s")."
+                    if games.isEmpty {
+                        self.metadataMessage = apiKey?.isEmpty == false ? "No games to enrich yet." : "Add a TGDB API key to fetch artwork and game details."
+                    } else if untriedGames.isEmpty {
+                        self.metadataMessage = enrichedCount == 0 ? "Metadata cache is up to date. No TGDB calls needed." : "Artwork/details loaded from cache for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s"). No TGDB calls needed."
+                    } else if apiKey?.isEmpty == false {
+                        self.metadataMessage = "\(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s") need metadata."
+                    } else {
+                        self.metadataMessage = "Add a TGDB key to fetch artwork for \(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s")."
+                    }
                     self.appendLog("Library scan found \(games.count) game\(games.count == 1 ? "" : "s").", .success)
                 }
 
-                guard let apiKey, !apiKey.isEmpty, !games.isEmpty else { return }
+                guard let apiKey, !apiKey.isEmpty, !untriedGames.isEmpty else { return }
 
                 await MainActor.run {
                     self.isFetchingMetadata = true
-                    self.metadataMessage = "Fetching game artwork and details..."
+                    self.metadataMessage = "Fetching artwork/details for \(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s"). Cached games are skipped."
                 }
 
                 var updatedCache = cache
                 let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
-                for game in games where updatedCache[game.id] == nil {
-                    if let metadata = try await provider.metadata(for: game.title) {
-                        updatedCache[game.id] = metadata
-                        let gameID = game.id
-                        await MainActor.run {
-                            if let index = self.libraryGames.firstIndex(where: { $0.id == gameID }) {
-                                self.libraryGames[index].metadata = metadata
+                for game in untriedGames where updatedCache[game.id] == nil {
+                    do {
+                        if let metadata = try await provider.metadata(for: game.title) {
+                            updatedCache[game.id] = GameMetadataCacheEntry(
+                                title: game.title,
+                                provider: metadata.provider,
+                                state: .success,
+                                attemptedAt: Date(),
+                                metadata: metadata,
+                                message: nil
+                            )
+                            let gameID = game.id
+                            await MainActor.run {
+                                if let index = self.libraryGames.firstIndex(where: { $0.id == gameID }) {
+                                    self.libraryGames[index].metadata = metadata
+                                }
                             }
+                        } else {
+                            updatedCache[game.id] = GameMetadataCacheEntry(
+                                title: game.title,
+                                provider: "TheGamesDB",
+                                state: .noMatch,
+                                attemptedAt: Date(),
+                                metadata: nil,
+                                message: "No TGDB match found."
+                            )
                         }
+                    } catch {
+                        updatedCache[game.id] = GameMetadataCacheEntry(
+                            title: game.title,
+                            provider: "TheGamesDB",
+                            state: .failed,
+                            attemptedAt: Date(),
+                            metadata: nil,
+                            message: error.localizedDescription
+                        )
                     }
+
+                    try? Self.saveMetadataCache(updatedCache)
                 }
 
-                try? Self.saveMetadataCache(updatedCache)
+                let currentGameIDs = Set(games.map(\.id))
+                let currentCacheEntries = updatedCache.filter { currentGameIDs.contains($0.key) }.values
+                let failedCount = currentCacheEntries.filter { $0.state == .failed }.count
+                let noMatchCount = currentCacheEntries.filter { $0.state == .noMatch }.count
                 await MainActor.run {
                     let enrichedCount = self.libraryGames.filter { $0.metadata != nil }.count
                     self.isFetchingMetadata = false
-                    self.metadataMessage = enrichedCount == 0 ? "No TGDB matches found yet." : "Artwork/details cached for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s")."
+                    if enrichedCount == 0 {
+                        self.metadataMessage = "Metadata cache updated. No matched artwork yet; cached misses will not be retried automatically."
+                    } else {
+                        var detail = "Artwork/details cached for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s")."
+                        if noMatchCount > 0 || failedCount > 0 {
+                            detail += " \(noMatchCount + failedCount) unmatched/failed lookup\(noMatchCount + failedCount == 1 ? "" : "s") cached too."
+                        }
+                        self.metadataMessage = detail
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -260,7 +326,7 @@ final class SwitchLoaderModel: ObservableObject {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         Self.saveTheGamesDBAPIKey(trimmed.isEmpty ? nil : trimmed)
         hasTheGamesDBAPIKey = !trimmed.isEmpty
-        metadataMessage = hasTheGamesDBAPIKey ? "TGDB key saved. Refresh library to fetch artwork." : "Add a TGDB API key to fetch artwork and game details."
+        metadataMessage = hasTheGamesDBAPIKey ? "TGDB key saved. Only new, uncached games will call TGDB." : "Add a TGDB API key to fetch artwork and game details."
         appendLog(hasTheGamesDBAPIKey ? "TGDB API key saved." : "TGDB API key cleared.", .info)
     }
 
@@ -654,7 +720,7 @@ final class SwitchLoaderModel: ObservableObject {
 
     private nonisolated static func groupLibraryGames(
         from items: [LibraryItem],
-        cache: [String: GameMetadata]
+        cache: [String: GameMetadataCacheEntry]
     ) -> [LibraryGame] {
         let grouped = Dictionary(grouping: items) { stableGameID(for: $0.title) }
         return grouped.map { id, items in
@@ -665,7 +731,7 @@ final class SwitchLoaderModel: ObservableObject {
                 return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
             }
             let title = sortedItems.first?.title ?? id
-            return LibraryGame(id: id, title: title, items: sortedItems, metadata: cache[id])
+            return LibraryGame(id: id, title: title, items: sortedItems, metadata: cache[id]?.metadata)
         }
         .sorted {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
@@ -680,12 +746,26 @@ final class SwitchLoaderModel: ObservableObject {
             .lowercased()
     }
 
-    private nonisolated static func loadMetadataCache() -> [String: GameMetadata] {
+    private nonisolated static func loadMetadataCache() -> [String: GameMetadataCacheEntry] {
         guard let data = try? Data(contentsOf: metadataCacheURL) else { return [:] }
-        return (try? JSONDecoder().decode([String: GameMetadata].self, from: data)) ?? [:]
+        if let cache = try? JSONDecoder().decode([String: GameMetadataCacheEntry].self, from: data) {
+            return cache
+        }
+
+        let legacyCache = (try? JSONDecoder().decode([String: GameMetadata].self, from: data)) ?? [:]
+        return legacyCache.mapValues { metadata in
+            GameMetadataCacheEntry(
+                title: metadata.matchedTitle,
+                provider: metadata.provider,
+                state: .success,
+                attemptedAt: Date.distantPast,
+                metadata: metadata,
+                message: "Migrated from older metadata cache."
+            )
+        }
     }
 
-    private nonisolated static func saveMetadataCache(_ cache: [String: GameMetadata]) throws {
+    private nonisolated static func saveMetadataCache(_ cache: [String: GameMetadataCacheEntry]) throws {
         let url = metadataCacheURL
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(cache)

@@ -268,7 +268,7 @@ struct ContentView: View {
                 Button {
                     model.refreshLibraryMetadata()
                 } label: {
-                    Label(model.isFetchingMetadata ? "Fetching Art" : "Fetch Artwork", systemImage: "sparkles")
+                    Label(model.isFetchingMetadata ? "Fetching New Art" : "Fetch New Art", systemImage: "sparkles")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(!model.hasTheGamesDBAPIKey || model.libraryGames.isEmpty || model.isFetchingMetadata)

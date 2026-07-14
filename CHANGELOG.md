@@ -35,6 +35,7 @@
 - Corrected the largest app icon size to the macOS archive-required 1024px asset.
 - README and app version metadata now reflect the RCM-capable `v1.1.0` release.
 - Library now groups install files into game cards, stores the library folder as a security-scoped bookmark, fetches TGDB artwork/details, and shows a rich game detail sheet with install-order queue actions.
+- Library metadata lookups now cache successful matches, missed matches, and failed attempts so TGDB is only called for newly discovered games.
 
 ### Tests
 
