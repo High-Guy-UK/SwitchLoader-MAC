@@ -333,7 +333,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     HorizontalWheelScrollView {
-                        HStack(alignment: .top, spacing: 18) {
+                        HStack(alignment: .top, spacing: 16) {
                             ForEach(model.libraryGames) { game in
                                 LibraryGamePoster(game: game) {
                                     selectedLibraryGame = game
@@ -347,7 +347,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 18)
                         .padding(.top, 14)
-                        .padding(.bottom, 18)
+                        .padding(.bottom, 22)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -629,12 +629,10 @@ private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
         let scrollView = WheelDrivenHorizontalScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.hasVerticalScroller = false
-        scrollView.autohidesScrollers = false
-        scrollView.scrollerStyle = .legacy
-        scrollView.horizontalScroller?.controlSize = .small
-        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
+        scrollView.autohidesScrollers = true
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
         let hostingView = NSHostingView(rootView: content)
         hostingView.translatesAutoresizingMaskIntoConstraints = true
@@ -724,7 +722,7 @@ private struct LibraryGamePoster: View {
                 }
                 .padding(9)
             }
-            .frame(width: 168, height: 252)
+            .frame(width: 152, height: 228)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -736,7 +734,7 @@ private struct LibraryGamePoster: View {
                 .font(.callout.bold())
                 .lineLimit(2)
                 .foregroundStyle(.primary)
-                .frame(width: 168, alignment: .leading)
+                .frame(width: 152, alignment: .leading)
 
             HStack(spacing: 5) {
                 if !game.mainGames.isEmpty {
@@ -753,9 +751,9 @@ private struct LibraryGamePoster: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(width: 168)
+            .frame(width: 152)
         }
-        .frame(width: 168, alignment: .topLeading)
+        .frame(width: 152, alignment: .topLeading)
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onTapGesture(perform: open)
         .help(game.metadata?.summary ?? game.title)
