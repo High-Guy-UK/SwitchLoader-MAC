@@ -78,6 +78,12 @@ struct GameMetadata: Codable, Hashable, Sendable {
     let matchedTitle: String
     let summary: String?
     let releaseDate: String?
+    let platformName: String?
+    let rating: String?
+    let players: String?
+    let coop: String?
+    let youtubeURL: URL?
+    let aliases: [String]?
     let genres: [String]
     let developers: [String]
     let publishers: [String]
@@ -86,6 +92,27 @@ struct GameMetadata: Codable, Hashable, Sendable {
     let coverImageURL: URL?
     let logoImageURL: URL?
     let screenshotImageURLs: [URL]
+}
+
+struct GameMetadataMatch: Identifiable, Hashable, Sendable {
+    let provider: String
+    let providerID: String
+    let title: String
+    let summary: String?
+    let releaseDate: String?
+    let platformName: String?
+    let rating: String?
+    let players: String?
+    let coop: String?
+    let youtubeURL: URL?
+    let aliases: [String]
+    let genres: [String]
+    let developers: [String]
+    let publishers: [String]
+
+    var id: String {
+        providerID
+    }
 }
 
 enum MetadataLookupState: String, Codable, Hashable, Sendable {
@@ -102,6 +129,17 @@ struct GameMetadataCacheEntry: Codable, Hashable, Sendable {
     let lookupPlatformID: Int?
     let metadata: GameMetadata?
     let message: String?
+}
+
+enum MetadataLookupError: LocalizedError {
+    case missingAPIKey
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            "Add a TGDB API key before matching artwork."
+        }
+    }
 }
 
 @MainActor
@@ -340,6 +378,41 @@ final class SwitchLoaderModel: ObservableObject {
 
     func refreshLibraryMetadata() {
         scanLibrary()
+    }
+
+    func searchMetadataMatches(for query: String) async throws -> [GameMetadataMatch] {
+        guard let apiKey = Self.loadTheGamesDBAPIKey(), !apiKey.isEmpty else {
+            throw MetadataLookupError.missingAPIKey
+        }
+
+        let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
+        return try await provider.matches(for: query)
+    }
+
+    func applyMetadataMatch(_ match: GameMetadataMatch, to game: LibraryGame) async throws {
+        guard let apiKey = Self.loadTheGamesDBAPIKey(), !apiKey.isEmpty else {
+            throw MetadataLookupError.missingAPIKey
+        }
+
+        let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
+        let metadata = try await provider.metadata(for: match)
+        var cache = Self.loadMetadataCache()
+        cache[game.id] = GameMetadataCacheEntry(
+            title: game.title,
+            provider: metadata.provider,
+            state: .success,
+            attemptedAt: Date(),
+            lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
+            metadata: metadata,
+            message: "Manual match selected."
+        )
+        try Self.saveMetadataCache(cache)
+
+        if let index = libraryGames.firstIndex(where: { $0.id == game.id }) {
+            libraryGames[index].metadata = metadata
+        }
+        metadataMessage = "Manual match saved for \(game.title)."
+        appendLog("Manual TGDB match saved for \(game.title).", .success)
     }
 
     func setRCMPayload(_ url: URL) {
@@ -828,16 +901,33 @@ private struct TheGamesDBMetadataProvider: Sendable {
 
     func metadata(for title: String) async throws -> GameMetadata? {
         guard let game = try await findGame(named: title) else { return nil }
-        let images = try await loadImages(for: game.id)
+        return try await metadata(for: game.match)
+    }
+
+    func matches(for title: String) async throws -> [GameMetadataMatch] {
+        try await findGames(named: title).map(\.match)
+    }
+
+    func metadata(for match: GameMetadataMatch) async throws -> GameMetadata {
+        guard let gameID = Int(match.providerID) else {
+            throw URLError(.badURL)
+        }
+        let images = try await loadImages(for: gameID)
         return GameMetadata(
             provider: "TheGamesDB",
-            providerID: String(game.id),
-            matchedTitle: game.name,
-            summary: game.overview,
-            releaseDate: game.releaseDate,
-            genres: game.genres,
-            developers: game.developers,
-            publishers: game.publishers,
+            providerID: match.providerID,
+            matchedTitle: match.title,
+            summary: match.summary,
+            releaseDate: match.releaseDate,
+            platformName: match.platformName,
+            rating: match.rating,
+            players: match.players,
+            coop: match.coop,
+            youtubeURL: match.youtubeURL,
+            aliases: match.aliases,
+            genres: match.genres,
+            developers: match.developers,
+            publishers: match.publishers,
             bannerImageURL: images.preferredURL(types: ["banner", "fanart", "screenshot"]),
             artworkImageURL: images.preferredURL(types: ["fanart", "screenshot"]),
             coverImageURL: images.preferredURL(types: ["boxart"]),
@@ -847,31 +937,38 @@ private struct TheGamesDBMetadataProvider: Sendable {
     }
 
     private func findGame(named title: String) async throws -> RemoteGame? {
+        try await findGames(named: title).max { lhs, rhs in
+            score(lhs.name, against: title) < score(rhs.name, against: title)
+        }
+    }
+
+    private func findGames(named title: String) async throws -> [RemoteGame] {
         guard var components = URLComponents(string: "https://api.thegamesdb.net/v1/Games/ByGameName") else {
-            return nil
+            return []
         }
         components.queryItems = [
             URLQueryItem(name: "apikey", value: apiKey),
             URLQueryItem(name: "name", value: title),
-            URLQueryItem(name: "fields", value: "overview,genres,developers,publishers,platform"),
+            URLQueryItem(name: "fields", value: "overview,genres,developers,publishers,platform,players,coop,rating,youtube,alternates"),
+            URLQueryItem(name: "language", value: "en"),
+            URLQueryItem(name: "lang", value: "en"),
             URLQueryItem(name: "filter[platform]", value: String(Self.nintendoSwitchPlatformID))
         ]
-        guard let url = components.url else { return nil }
+        guard let url = components.url else { return [] }
 
         let object = try await jsonObject(from: url)
         guard let data = object["data"] as? [String: Any],
               let games = data["games"] as? [[String: Any]]
         else {
-            return nil
+            return []
         }
 
-        let switchGames = games
+        return games
             .compactMap(RemoteGame.init(dictionary:))
             .filter(\.isNintendoSwitchRelease)
-
-        return switchGames.max { lhs, rhs in
-            score(lhs.name, against: title) < score(rhs.name, against: title)
-        }
+            .sorted {
+                score($0.name, against: title) > score($1.name, against: title)
+            }
     }
 
     private func loadImages(for gameID: Int) async throws -> RemoteImages {
@@ -938,8 +1035,32 @@ private struct TheGamesDBMetadataProvider: Sendable {
         let genres: [String]
         let developers: [String]
         let publishers: [String]
+        let rating: String?
+        let players: String?
+        let coop: String?
+        let youtubeURL: URL?
+        let aliases: [String]
         let platformIDs: Set<Int>
         let platformNames: Set<String>
+
+        var match: GameMetadataMatch {
+            GameMetadataMatch(
+                provider: "TheGamesDB",
+                providerID: String(id),
+                title: name,
+                summary: overview,
+                releaseDate: releaseDate,
+                platformName: platformNames.sorted().first,
+                rating: rating,
+                players: players,
+                coop: coop,
+                youtubeURL: youtubeURL,
+                aliases: aliases,
+                genres: genres,
+                developers: developers,
+                publishers: publishers
+            )
+        }
 
         var isNintendoSwitchRelease: Bool {
             platformIDs.contains(TheGamesDBMetadataProvider.nintendoSwitchPlatformID)
@@ -958,11 +1079,16 @@ private struct TheGamesDBMetadataProvider: Sendable {
 
             self.id = id
             self.name = name
-            self.overview = dictionary["overview"] as? String
-            self.releaseDate = dictionary["release_date"] as? String
+            self.overview = Self.englishText(from: dictionary["overview"])
+            self.releaseDate = Self.stringValue(from: dictionary["release_date"])
             self.genres = Self.stringList(from: dictionary["genres"])
             self.developers = Self.stringList(from: dictionary["developers"])
             self.publishers = Self.stringList(from: dictionary["publishers"])
+            self.rating = Self.stringValue(from: dictionary["rating"] ?? dictionary["esrb"] ?? dictionary["certification"])
+            self.players = Self.stringValue(from: dictionary["players"] ?? dictionary["max_players"])
+            self.coop = Self.stringValue(from: dictionary["coop"] ?? dictionary["co-op"] ?? dictionary["co_op"])
+            self.youtubeURL = Self.youtubeURL(from: dictionary["youtube"] ?? dictionary["youtube_url"] ?? dictionary["trailer"])
+            self.aliases = Self.stringList(from: dictionary["alternates"] ?? dictionary["aliases"] ?? dictionary["alternate_titles"])
             let platform = Self.platformValues(from: dictionary["platform"])
             let platformID = Self.platformValues(from: dictionary["platform_id"])
             let platforms = Self.platformValues(from: dictionary["platforms"])
@@ -970,12 +1096,73 @@ private struct TheGamesDBMetadataProvider: Sendable {
             self.platformNames = platform.names.union(platformID.names).union(platforms.names)
         }
 
+        private static func englishText(from value: Any?) -> String? {
+            if let string = value as? String {
+                return string.isEmpty ? nil : string
+            }
+
+            if let dictionary = value as? [String: Any] {
+                for key in ["en", "eng", "english", "EN", "English"] {
+                    if let text = stringValue(from: dictionary[key]), !text.isEmpty {
+                        return text
+                    }
+                }
+                return dictionary.values.compactMap { stringValue(from: $0) }.first { !$0.isEmpty }
+            }
+
+            if let values = value as? [[String: Any]] {
+                let english = values.first { entry in
+                    let language = stringValue(from: entry["language"] ?? entry["lang"] ?? entry["locale"]) ?? ""
+                    return language.localizedCaseInsensitiveContains("en")
+                        || language.localizedCaseInsensitiveContains("english")
+                }
+                if let text = english.flatMap({ stringValue(from: $0["text"] ?? $0["overview"] ?? $0["value"]) }), !text.isEmpty {
+                    return text
+                }
+            }
+
+            return nil
+        }
+
+        private static func stringValue(from value: Any?) -> String? {
+            switch value {
+            case let string as String:
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            case let number as NSNumber:
+                return number.stringValue
+            case let int as Int:
+                return String(int)
+            default:
+                return nil
+            }
+        }
+
+        private static func youtubeURL(from value: Any?) -> URL? {
+            guard let text = stringValue(from: value) else { return nil }
+            if let url = URL(string: text), url.scheme != nil {
+                return url
+            }
+            return URL(string: "https://www.youtube.com/watch?v=\(text)")
+        }
+
         private static func stringList(from value: Any?) -> [String] {
             if let values = value as? [String] {
                 return values
             }
             if let values = value as? [Any] {
-                return values.compactMap { $0 as? String }
+                return values.compactMap { item in
+                    if let string = item as? String {
+                        return string
+                    }
+                    if let dictionary = item as? [String: Any] {
+                        return stringValue(from: dictionary["name"] ?? dictionary["title"] ?? dictionary["value"])
+                    }
+                    return nil
+                }
+            }
+            if let dictionary = value as? [String: Any] {
+                return dictionary.values.compactMap { stringValue(from: $0) }
             }
             return []
         }

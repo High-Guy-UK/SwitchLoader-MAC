@@ -7,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: SwitchLoaderModel
     @State private var selectedTab = AppTab.workflow
     @State private var selectedLibraryGame: LibraryGame?
+    @State private var manualMatchGame: LibraryGame?
     @State private var isShowingMetadataSettings = false
     @State private var metadataAPIKey = ""
 
@@ -48,7 +49,12 @@ struct ContentView: View {
                 selectedLibraryGame = nil
             }
             .environmentObject(model)
-            .frame(minWidth: 760, minHeight: 560)
+            .frame(minWidth: 960, minHeight: 720)
+        }
+        .sheet(item: $manualMatchGame) { game in
+            ManualMetadataMatchSheet(game: game)
+                .environmentObject(model)
+                .frame(minWidth: 720, minHeight: 560)
         }
         .sheet(isPresented: $isShowingMetadataSettings) {
             MetadataSettingsSheet(apiKey: $metadataAPIKey) {
@@ -334,6 +340,8 @@ struct ContentView: View {
                                 } addAll: {
                                     model.addGameToQueue(game)
                                     selectedTab = .workflow
+                                } manualMatch: {
+                                    manualMatchGame = game
                                 }
                             }
                         }
@@ -680,6 +688,7 @@ private struct LibraryGamePoster: View {
     let game: LibraryGame
     let open: () -> Void
     let addAll: () -> Void
+    let manualMatch: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -692,15 +701,28 @@ private struct LibraryGamePoster: View {
                     endPoint: .bottom
                 )
 
-                Button(action: addAll) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .symbolRenderingMode(.hierarchical)
+                HStack(spacing: 8) {
+                    if game.metadata == nil {
+                        Button(action: manualMatch) {
+                            Image(systemName: "magnifyingglass.circle.fill")
+                                .font(.title3)
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.white)
+                        .help("Manual match artwork/details")
+                    }
+
+                    Button(action: addAll) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.white)
+                    .help("Queue in install order")
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.white)
                 .padding(9)
-                .help("Queue in install order")
             }
             .frame(width: 168, height: 252)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -775,22 +797,53 @@ private struct LibraryGamePoster: View {
                 .lineLimit(4)
                 .padding(14)
                 .foregroundStyle(.white.opacity(0.84))
+
+            if game.metadata == nil {
+                VStack {
+                    Spacer()
+                    Text("Manual Match")
+                        .font(.caption.bold())
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.28), in: Capsule())
+                        .foregroundStyle(.white.opacity(0.88))
+                }
+                .padding(.bottom, 38)
+            }
         }
     }
 }
 
 private struct LibraryGameDetailSheet: View {
     @EnvironmentObject private var model: SwitchLoaderModel
+    @State private var isShowingManualMatch = false
     let game: LibraryGame
     let close: () -> Void
 
+    private var currentGame: LibraryGame {
+        model.libraryGames.first(where: { $0.id == game.id }) ?? game
+    }
+
     var body: some View {
+        let game = currentGame
+
         VStack(spacing: 0) {
             HStack {
                 Button(action: close) {
                     Label("Back", systemImage: "chevron.left")
                 }
+                Text("Game Details")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 8)
                 Spacer()
+                if game.metadata == nil {
+                    Button {
+                        isShowingManualMatch = true
+                    } label: {
+                        Label("Manual Match", systemImage: "magnifyingglass")
+                    }
+                }
                 Button(action: close) {
                     Label("Close", systemImage: "xmark")
                 }
@@ -800,44 +853,61 @@ private struct LibraryGameDetailSheet: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    hero
+                VStack(alignment: .leading, spacing: 22) {
+                    hero(game)
 
-                    HStack(alignment: .top, spacing: 18) {
-                        cover
+                    HStack(alignment: .top, spacing: 24) {
+                        cover(game)
 
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 14) {
                             Text(game.metadata?.matchedTitle ?? game.title)
                                 .font(.largeTitle.bold())
                                 .lineLimit(2)
 
-                            metadataLine
+                            metadataBadges(game)
 
                             if let summary = game.metadata?.summary, !summary.isEmpty {
                                 Text(summary)
-                                    .font(.body)
+                                    .font(.title3)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             } else {
-                                Text("No remote details cached yet. Add a TGDB key and refresh artwork to enrich this game.")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("No remote details cached yet.")
+                                        .font(.title3.bold())
+                                    Text("Use Manual Match to pick the correct Nintendo Switch entry and save artwork/details for this game.")
+                                        .foregroundStyle(.secondary)
+                                    Button {
+                                        isShowingManualMatch = true
+                                    } label: {
+                                        Label("Manual Match", systemImage: "magnifyingglass")
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                }
+                                .font(.body)
+                                .foregroundStyle(.secondary)
                             }
+
+                            actionButtons(game)
                         }
                     }
 
+                    infoSections(game)
+
                     warning
-
-                    actionButtons
-
-                    localFiles
+                    localFiles(game)
                 }
-                .padding(18)
+                .padding(24)
             }
+        }
+        .sheet(isPresented: $isShowingManualMatch) {
+            ManualMetadataMatchSheet(game: currentGame)
+                .environmentObject(model)
+                .frame(minWidth: 720, minHeight: 560)
         }
     }
 
-    private var hero: some View {
+    private func hero(_ game: LibraryGame) -> some View {
         ZStack(alignment: .bottomLeading) {
             if let url = game.heroImageURL {
                 AsyncImage(url: url) { phase in
@@ -856,17 +926,17 @@ private struct LibraryGameDetailSheet: View {
             LinearGradient(colors: [.clear, .black.opacity(0.78)], startPoint: .center, endPoint: .bottom)
 
             Text(game.metadata?.matchedTitle ?? game.title)
-                .font(.title.bold())
+                .font(.largeTitle.bold())
                 .foregroundStyle(.white)
-                .padding(18)
+                .padding(22)
         }
-        .frame(height: 230)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(height: 300)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private var cover: some View {
+    private func cover(_ game: LibraryGame) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.gray.opacity(0.18))
 
             if let url = game.metadata?.coverImageURL {
@@ -885,19 +955,89 @@ private struct LibraryGameDetailSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 132, height: 184)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(width: 190, height: 286)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12))
+        }
     }
 
     @ViewBuilder
-    private var metadataLine: some View {
+    private func metadataBadges(_ game: LibraryGame) -> some View {
         let metadata = game.metadata
-        let genres = metadata?.genres.prefix(3).joined(separator: ", ") ?? ""
-        let release = metadata?.releaseDate ?? ""
-        if !genres.isEmpty || !release.isEmpty {
-            Text([release, genres].filter { !$0.isEmpty }.joined(separator: " • "))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        let values = [
+            metadata?.platformName,
+            metadata?.releaseDate,
+            metadata?.genres.prefix(3).joined(separator: ", "),
+            metadata?.rating
+        ].compactMap { value in
+            let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? nil : text
+        }
+
+        if !values.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .font(.caption.bold())
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Color.gray.opacity(0.16), in: Capsule())
+                }
+            }
+        }
+    }
+
+    private func infoSections(_ game: LibraryGame) -> some View {
+        let metadata = game.metadata
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                DetailInfoSection(title: "Details") {
+                    DetailInfoRow(label: "Platform", value: metadata?.platformName ?? "Nintendo Switch")
+                    DetailInfoRow(label: "Release", value: metadata?.releaseDate)
+                    DetailInfoRow(label: "Rating", value: metadata?.rating)
+                    DetailInfoRow(label: "Players", value: metadata?.players)
+                    DetailInfoRow(label: "Co-op", value: metadata?.coop)
+                    DetailInfoRow(label: "Provider", value: metadata.map { "\($0.provider) #\($0.providerID)" })
+                }
+
+                DetailInfoSection(title: "Credits") {
+                    DetailInfoRow(label: "Developer", value: metadata?.developers.joined(separator: ", "))
+                    DetailInfoRow(label: "Publisher", value: metadata?.publishers.joined(separator: ", "))
+                    DetailInfoRow(label: "Genres", value: metadata?.genres.joined(separator: ", "))
+                    DetailInfoRow(label: "Aliases", value: metadata?.aliases?.joined(separator: ", "))
+                }
+            }
+
+            if let youtubeURL = metadata?.youtubeURL ?? nil {
+                Link(destination: youtubeURL) {
+                    Label("Open trailer", systemImage: "play.rectangle")
+                }
+            }
+
+            if let screenshots = metadata?.screenshotImageURLs, !screenshots.isEmpty {
+                DetailInfoSection(title: "Media") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(screenshots.prefix(8), id: \.self) { url in
+                                AsyncImage(url: url) { phase in
+                                    if let image = phase.image {
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                    } else {
+                                        Rectangle().fill(Color.gray.opacity(0.18))
+                                    }
+                                }
+                                .frame(width: 190, height: 108)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -917,7 +1057,7 @@ private struct LibraryGameDetailSheet: View {
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var actionButtons: some View {
+    private func actionButtons(_ game: LibraryGame) -> some View {
         HStack(spacing: 10) {
             Button {
                 model.addGameToQueue(game, contentType: .mainGame)
@@ -953,7 +1093,7 @@ private struct LibraryGameDetailSheet: View {
         }
     }
 
-    private var localFiles: some View {
+    private func localFiles(_ game: LibraryGame) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Local Files")
                 .font(.headline)
@@ -979,6 +1119,168 @@ private struct LibraryGameDetailSheet: View {
                 .help(item.url.path)
             }
         }
+    }
+}
+
+private struct DetailInfoSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.gray.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct DetailInfoRow: View {
+    let label: String
+    let value: String?
+
+    var body: some View {
+        if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            HStack(alignment: .top, spacing: 10) {
+                Text(label)
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 76, alignment: .leading)
+                Text(value)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct ManualMetadataMatchSheet: View {
+    @EnvironmentObject private var model: SwitchLoaderModel
+    @Environment(\.dismiss) private var dismiss
+    let game: LibraryGame
+    @State private var query: String
+    @State private var matches: [GameMetadataMatch] = []
+    @State private var message = ""
+    @State private var isSearching = false
+    @State private var isApplying = false
+
+    init(game: LibraryGame) {
+        self.game = game
+        _query = State(initialValue: game.title)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Manual Match")
+                        .font(.title2.bold())
+                    Text("Search Nintendo Switch entries and save the correct artwork/details for \(game.title).")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") {
+                    dismiss()
+                }
+            }
+
+            HStack(spacing: 10) {
+                TextField("Search title", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        Task { await search() }
+                    }
+                Button {
+                    Task { await search() }
+                } label: {
+                    Label(isSearching ? "Searching" : "Search", systemImage: "magnifyingglass")
+                }
+                .disabled(isSearching || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if !message.isEmpty {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(matches) { match in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(match.title)
+                                    .font(.headline)
+                                Text([match.platformName, match.releaseDate, match.genres.prefix(3).joined(separator: ", ")]
+                                    .compactMap { value in
+                                        let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                                        return text.isEmpty ? nil : text
+                                    }
+                                    .joined(separator: " • "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let summary = match.summary, !summary.isEmpty {
+                                    Text(summary)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(3)
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                Task { await apply(match) }
+                            } label: {
+                                Label("Use", systemImage: "checkmark.circle")
+                            }
+                            .disabled(isApplying)
+                        }
+                        .padding(12)
+                        .background(Color.gray.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .task {
+            if matches.isEmpty && message.isEmpty {
+                await search()
+            }
+        }
+    }
+
+    private func search() async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSearching = true
+        message = "Searching Nintendo Switch matches..."
+        do {
+            matches = try await model.searchMetadataMatches(for: trimmed)
+            message = matches.isEmpty ? "No Nintendo Switch matches found. Try a shorter title." : "Found \(matches.count) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
+        } catch {
+            message = error.localizedDescription
+        }
+        isSearching = false
+    }
+
+    private func apply(_ match: GameMetadataMatch) async {
+        isApplying = true
+        message = "Saving \(match.title)..."
+        do {
+            try await model.applyMetadataMatch(match, to: game)
+            dismiss()
+        } catch {
+            message = error.localizedDescription
+        }
+        isApplying = false
     }
 }
 

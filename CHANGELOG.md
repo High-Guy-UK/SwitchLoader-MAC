@@ -38,6 +38,7 @@
 - Library metadata lookups now cache successful matches, missed matches, and failed attempts so TGDB is only called for newly discovered games.
 - Library games now display as a rounded cover-poster carousel with horizontal scrolling, vertical wheel support, and a clean grey scrollbar.
 - TGDB library metadata now filters for Nintendo Switch platform matches only, preventing other console covers from being cached or displayed.
+- Game detail popups are larger and richer, with extra TGDB details, media, local file sections, English metadata hints, and manual matching for unmatched games.
 
 ### Tests
 
