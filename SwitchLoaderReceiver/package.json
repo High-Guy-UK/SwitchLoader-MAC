@@ -1,0 +1,23 @@
+{
+  "name": "switchloader-receiver",
+  "version": "0.1.0",
+  "description": "Switch-side receiver companion for SwitchLoader.",
+  "author": "SwitchLoader",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=romfs/main.js",
+    "nro": "npm run build && nxjs-nro",
+    "nro:fat": "npm run build && nxjs-nro --fat",
+    "nsp": "npm run build && nxjs-nsp"
+  },
+  "nacp": {
+    "id": "01574c5243520000",
+    "title": "SwitchLoader Receiver"
+  },
+  "devDependencies": {
+    "@nx.js/nro": "^1.0.0-beta.5",
+    "@nx.js/nsp": "^1.0.0-beta.5",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

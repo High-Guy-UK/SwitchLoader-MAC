@@ -10,6 +10,9 @@ struct ContentView: View {
     @State private var manualMatchGame: LibraryGame?
     @State private var isShowingMetadataSettings = false
     @State private var metadataAPIKey = ""
+    @State private var isShowingCustomHomebrewSheet = false
+    @State private var customHomebrewURL = ""
+    @State private var customHomebrewError = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +34,8 @@ struct ContentView: View {
                 }
             case .library:
                 library
+            case .homebrew:
+                homebrew
             case .rcm:
                 rcmWorkflow
             case .log:
@@ -40,6 +45,8 @@ struct ContentView: View {
         .onChange(of: selectedTab) { _, newTab in
             if newTab == .library {
                 model.scanLibrary()
+            } else if newTab == .homebrew {
+                model.refreshHomebrewArchiveStatus()
             } else if newTab == .rcm {
                 model.refreshRCMConnection()
             }
@@ -65,6 +72,25 @@ struct ContentView: View {
             }
             .frame(width: 460)
         }
+        .sheet(isPresented: $isShowingCustomHomebrewSheet) {
+            CustomHomebrewSheet(
+                repositoryURL: $customHomebrewURL,
+                errorMessage: customHomebrewError
+            ) {
+                do {
+                    try model.addCustomHomebrewRepository(customHomebrewURL)
+                    customHomebrewURL = ""
+                    customHomebrewError = ""
+                    isShowingCustomHomebrewSheet = false
+                } catch {
+                    customHomebrewError = error.localizedDescription
+                }
+            } onCancel: {
+                customHomebrewError = ""
+                isShowingCustomHomebrewSheet = false
+            }
+            .frame(width: 520)
+        }
     }
 
     private var header: some View {
@@ -85,11 +111,12 @@ struct ContentView: View {
             Picker("", selection: $selectedTab) {
                 Label("Install", systemImage: "cable.connector").tag(AppTab.workflow)
                 Label("Library", systemImage: "books.vertical").tag(AppTab.library)
+                Label("Homebrew", systemImage: "shippingbox").tag(AppTab.homebrew)
                 Label("RCM", systemImage: "bolt.horizontal").tag(AppTab.rcm)
                 Label("Log", systemImage: "list.bullet.rectangle").tag(AppTab.log)
             }
             .pickerStyle(.segmented)
-            .frame(width: 360)
+            .frame(width: 470)
             .labelsHidden()
 
             Spacer()
@@ -136,6 +163,35 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .disabled(model.selectedFiles.isEmpty)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("SwitchLoader Receiver")
+                    .font(.subheadline.bold())
+
+                Text(model.receiverInstruction)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let receiverServerURL = model.receiverServerURL {
+                    Text(receiverServerURL)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+
+                Button {
+                    model.startReceiverServer()
+                } label: {
+                    Label("Start Receiver Server", systemImage: "network")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(!model.canStartReceiverServer)
+            }
         }
         .padding(16)
     }
@@ -355,6 +411,132 @@ struct ContentView: View {
         }
     }
 
+    private var homebrew: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Homebrew")
+                    .font(.headline)
+
+                Text(model.homebrewArchiveDirectory?.path ?? "No HomebrewApps archive selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+
+                HStack(spacing: 8) {
+                    Button {
+                        chooseHomebrewArchiveFolder()
+                    } label: {
+                        Label("Archive", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+
+                    Button {
+                        openHomebrewArchiveFolder()
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                            .frame(width: 28)
+                    }
+                    .disabled(model.homebrewArchiveDirectory == nil)
+                    .help("Open archive folder")
+                }
+
+                Button {
+                    isShowingCustomHomebrewSheet = true
+                } label: {
+                    Label("Add GitHub", systemImage: "link.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+
+                Button {
+                    model.refreshHomebrewArchiveStatus()
+                } label: {
+                    Label("Refresh Ready", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(model.homebrewArchiveDirectory == nil)
+
+                Button {
+                    model.downloadSelectedHomebrew()
+                } label: {
+                    Label("Download Selected", systemImage: "icloud.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(model.homebrewArchiveDirectory == nil || model.selectedHomebrewEntryIDs.isEmpty)
+
+                Button {
+                    chooseHomebrewGenerateFolder()
+                } label: {
+                    Label(model.isGeneratingHomebrewFolder ? "Generating" : "Generate Folder", systemImage: "folder.badge.gearshape")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isGeneratingHomebrewFolder || model.selectedHomebrewEntryIDs.isEmpty)
+
+                if let generatedHomebrewFolderURL = model.generatedHomebrewFolderURL {
+                    Button {
+                        revealInFinder(generatedHomebrewFolderURL)
+                    } label: {
+                        Label("Show Generated", systemImage: "folder")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Only download homebrew you trust.", systemImage: "checkmark.shield.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.green)
+                    Text("SwitchLoader pulls release assets from each GitHub repo and assembles selected apps into a ready folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(Color.green.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+
+                Spacer()
+
+                Text(model.homebrewMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(width: 300)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Homebrew Library")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(model.downloadedHomebrewEntryIDs.count)/\(model.homebrewCatalog.count) ready")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(14)
+
+                List {
+                    ForEach(model.homebrewCatalog) { entry in
+                        HomebrewCatalogRow(
+                            entry: entry,
+                            isSelected: model.selectedHomebrewEntryIDs.contains(entry.id),
+                            isDownloaded: model.downloadedHomebrewEntryIDs.contains(entry.id),
+                            isDownloading: model.downloadingHomebrewEntryIDs.contains(entry.id)
+                        ) { isSelected in
+                            model.setHomebrewSelection(entry, isSelected: isSelected)
+                        } download: {
+                            model.downloadHomebrew(entry)
+                        } remove: {
+                            model.removeCustomHomebrewEntry(entry)
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
     private var rcmWorkflow: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 13) {
@@ -538,6 +720,40 @@ struct ContentView: View {
         }
     }
 
+    private func chooseHomebrewArchiveFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose or create HomebrewApps archive"
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the folder SwitchLoader should use to store downloaded homebrew apps."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.directoryURL = model.homebrewArchiveDirectory
+
+        if panel.runModal() == .OK, let url = panel.url {
+            model.setHomebrewArchiveDirectory(url)
+        }
+    }
+
+    private func chooseHomebrewGenerateFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose where to generate the Homebrew folder"
+        panel.prompt = "Generate Here"
+        panel.message = "SwitchLoader will create a new ready-to-copy Homebrew folder inside this location."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.directoryURL = model.generatedHomebrewFolderURL?.deletingLastPathComponent() ?? model.homebrewArchiveDirectory
+
+        if panel.runModal() == .OK, let url = panel.url {
+            model.generateHomebrewFolder(in: url)
+        }
+    }
+
     private func chooseRCMPayload() {
         let panel = NSOpenPanel()
         panel.title = "Choose RCM payload"
@@ -560,6 +776,11 @@ struct ContentView: View {
         NSWorkspace.shared.open(url)
     }
 
+    private func openHomebrewArchiveFolder() {
+        guard let url = model.homebrewArchiveDirectory else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     private func revealInFinder(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
@@ -573,6 +794,7 @@ struct ContentView: View {
 private enum AppTab {
     case workflow
     case library
+    case homebrew
     case rcm
     case log
 }
@@ -812,6 +1034,109 @@ private struct LibraryGamePoster: View {
     }
 }
 
+private struct HomebrewCatalogRow: View {
+    let entry: HomebrewCatalogEntry
+    let isSelected: Bool
+    let isDownloaded: Bool
+    let isDownloading: Bool
+    let select: (Bool) -> Void
+    let download: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button {
+                select(!isSelected)
+            } label: {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .frame(width: 24)
+            }
+            .buttonStyle(.borderless)
+            .help(isSelected ? "Untick" : "Tick")
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Text(entry.name)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+
+                    Text(entry.category.rawValue)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(entry.category.tint.opacity(0.14), in: Capsule())
+                        .foregroundStyle(entry.category.tint)
+
+                    if !entry.isBuiltIn {
+                        Text("Custom")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+
+                Text(entry.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                HStack(spacing: 8) {
+                    Link(destination: entry.repositoryURL) {
+                        Label(entry.repositoryName, systemImage: "link")
+                            .font(.caption)
+                    }
+
+                    if isDownloaded {
+                        Label("Ready", systemImage: "checkmark.circle.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Not Downloaded", systemImage: "circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                download()
+            } label: {
+                Label(isDownloading ? "Downloading" : "Download", systemImage: isDownloaded ? "arrow.clockwise" : "icloud.and.arrow.down")
+            }
+            .disabled(isDownloading)
+
+            if !entry.isBuiltIn {
+                Button(role: .destructive) {
+                    remove()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .help("Remove custom repo")
+            }
+        }
+        .padding(.vertical, 6)
+        .help(entry.repositoryURL.absoluteString)
+        .contextMenu {
+            Link(destination: entry.repositoryURL) {
+                Label("Open GitHub", systemImage: "link")
+            }
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(entry.repositoryURL.absoluteString, forType: .string)
+            } label: {
+                Label("Copy GitHub Link", systemImage: "doc.on.doc")
+            }
+        }
+    }
+}
+
 private struct LibraryGameDetailSheet: View {
     @EnvironmentObject private var model: SwitchLoaderModel
     @State private var isShowingManualMatch = false
@@ -835,12 +1160,10 @@ private struct LibraryGameDetailSheet: View {
                     .foregroundStyle(.secondary)
                     .padding(.leading, 8)
                 Spacer()
-                if game.metadata == nil {
-                    Button {
-                        isShowingManualMatch = true
-                    } label: {
-                        Label("Manual Match", systemImage: "magnifyingglass")
-                    }
+                Button {
+                    isShowingManualMatch = true
+                } label: {
+                    Label(game.metadata == nil ? "Manual Match" : "Fix Match", systemImage: "magnifyingglass")
                 }
                 Button(action: close) {
                     Label("Close", systemImage: "xmark")
@@ -1317,6 +1640,46 @@ private struct MetadataSettingsSheet: View {
     }
 }
 
+private struct CustomHomebrewSheet: View {
+    @Binding var repositoryURL: String
+    let errorMessage: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add GitHub Homebrew")
+                .font(.title2.bold())
+
+            Text("Paste a public GitHub repository link. SwitchLoader will use its latest release assets when downloading.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField("https://github.com/owner/repo", text: $repositoryURL)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(onSave)
+
+            if !errorMessage.isEmpty {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Add") {
+                    onSave()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+    }
+}
+
 private struct RCMConnectionBadge: View {
     let isConnected: Bool
 
@@ -1418,6 +1781,33 @@ private extension LibraryContentType {
         case .dlc:
             .cyan
         case .other:
+            .secondary
+        }
+    }
+}
+
+private extension HomebrewCategory {
+    var tint: Color {
+        switch self {
+        case .launcher:
+            .blue
+        case .files:
+            .teal
+        case .saves:
+            .green
+        case .media:
+            .purple
+        case .utility:
+            .orange
+        case .overlay:
+            .cyan
+        case .sysmodule:
+            .red
+        case .modding:
+            .pink
+        case .development:
+            .indigo
+        case .custom:
             .secondary
         }
     }

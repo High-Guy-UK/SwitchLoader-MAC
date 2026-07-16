@@ -1,6 +1,6 @@
 # SwitchLoader
 
-SwitchLoader is a native Swift macOS app for Switch USB install workflows, local library browsing, and RCM payload launching.
+SwitchLoader is a native Swift macOS app for Switch USB install workflows, local library browsing, homebrew app pack building, and RCM payload launching.
 
 The main workflow is USB install:
 
@@ -15,8 +15,9 @@ The app currently includes:
 - Split file creation.
 - Split file merge.
 - Library scanning for NSP, NSZ, XCI, XCZ, and split folders inside a chosen folder and its subfolders.
+- A Homebrew tab with a built-in GitHub starter catalog, custom repository entries, release asset downloads, and ready-to-copy SD card folders.
 - RCM payload pushing for `.bin` payloads while the device is in RCM mode.
-- A SwiftUI workflow with separate Install, Library, RCM, and Log tabs.
+- A SwiftUI workflow with separate Install, Library, Homebrew, RCM, and Log tabs.
 
 ## Dependency
 
@@ -50,7 +51,7 @@ swift test
 
 ## Current Scope
 
-USB install currently targets Awoo/Tinfoil-compatible installers. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and has been tested with Hekate payload launching over USB.
+USB install currently targets Awoo/Tinfoil-compatible installers. The Homebrew workflow downloads public GitHub release assets and assembles selected apps into a folder you can copy to an SD card. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and has been tested with Hekate payload launching over USB.
 
 ## Attribution
 

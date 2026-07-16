@@ -3,11 +3,13 @@ import Foundation
 
 final class NetworkFileServer {
     private let filesByEncodedName: [String: SwitchTransferFile]
+    private let manifestPayload: Data?
     private let port: Int
     private let descriptor: Int32
 
-    init(files: [SwitchTransferFile], port: Int) throws {
+    init(files: [SwitchTransferFile], port: Int, manifestPayload: Data? = nil) throws {
         self.filesByEncodedName = Dictionary(uniqueKeysWithValues: files.map { ($0.encodedName, $0) })
+        self.manifestPayload = manifestPayload
         self.port = port
         self.descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
@@ -55,7 +57,8 @@ final class NetworkFileServer {
             }
 
             let request = try readRequest(from: client)
-            if request.firstLine.hasPrefix("DROP") {
+            if request.method == "DROP" || request.path == "/__switchloader/drop" {
+                try writeString(HTTPResponse.noContent(), to: client)
                 shouldContinue = false
                 continue
             }
@@ -69,6 +72,15 @@ final class NetworkFileServer {
         client: Int32,
         onEvent: @escaping @Sendable (NetworkInstallEvent) -> Void
     ) throws {
+        if request.method == "GET", request.isManifestRequest, let manifestPayload {
+            try writeString(HTTPResponse.json(length: manifestPayload.count), to: client)
+            try manifestPayload.withUnsafeBytes { buffer in
+                try writeAll(buffer, to: client)
+            }
+            onEvent(.log(TransferLogEntry(level: .info, message: "Served receiver manifest.")))
+            return
+        }
+
         guard let encodedName = request.encodedFileName,
               let file = filesByEncodedName[encodedName],
               file.size > 0
@@ -170,6 +182,16 @@ private struct HTTPRequest {
         firstLine.split(separator: " ").first.map(String.init) ?? ""
     }
 
+    var path: String {
+        let parts = firstLine.split(separator: " ")
+        guard parts.count >= 2 else { return "" }
+        return String(parts[1])
+    }
+
+    var isManifestRequest: Bool {
+        path == "/manifest.json" || path == "/__switchloader/manifest.json"
+    }
+
     var encodedFileName: String? {
         let parts = firstLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
@@ -203,6 +225,19 @@ private struct HTTPRequest {
 }
 
 private enum HTTPResponse {
+    static func json(length: Int) -> String {
+        """
+        HTTP/1.0 200 OK\r
+        Server: SwitchLoader\r
+        Date: \(date)\r
+        Content-Type: application/json; charset=utf-8\r
+        Cache-Control: no-store\r
+        Content-Length: \(length)\r
+        \r
+
+        """
+    }
+
     static func ok(size: UInt64) -> String {
         """
         HTTP/1.0 200 OK\r
@@ -243,6 +278,10 @@ private enum HTTPResponse {
 
     static func rangeNotSatisfiable() -> String {
         empty(status: "416 Requested Range Not Satisfiable")
+    }
+
+    static func noContent() -> String {
+        empty(status: "204 No Content")
     }
 
     private static func empty(status: String) -> String {

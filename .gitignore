@@ -15,6 +15,12 @@ xcuserdata/
 *.app
 *.dSYM
 
+# SwitchLoader Receiver build output
+SwitchLoaderReceiver/node_modules/
+SwitchLoaderReceiver/romfs/main.js
+SwitchLoaderReceiver/*.nro
+SwitchLoaderReceiver/*.nsp
+
 # Local editor state
 .vscode/
 .idea/

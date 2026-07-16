@@ -40,6 +40,7 @@
 - TGDB library metadata now filters for Nintendo Switch platform matches only, preventing other console covers from being cached or displayed.
 - Game detail popups are larger and richer, with extra TGDB details, media, local file sections, English metadata hints, and manual matching for unmatched games.
 - Library carousel posters are slightly smaller and the visible scrollbar has been removed for a cleaner shelf layout.
+- Homebrew tab with a 50-entry GitHub starter catalog, saved HomebrewApps archive folder, ready/downloaded indicators, multi-select downloads, custom GitHub repo entries, and generated ready-to-copy homebrew folders.
 
 ### Tests
 
