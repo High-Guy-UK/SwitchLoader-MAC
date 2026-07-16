@@ -825,14 +825,19 @@ private struct WorkflowStep: View {
 
 private struct LibraryTypePill: View {
     let type: LibraryContentType
+    var compact = false
 
     var body: some View {
-        Text(type.title)
+        Text(compact ? type.shortTitle : type.title)
             .font(.caption2.bold())
-            .padding(.horizontal, 8)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, compact ? 6 : 8)
             .padding(.vertical, 3)
+            .frame(minWidth: compact ? 31 : nil)
             .background(type.tint.opacity(0.16), in: Capsule())
             .foregroundStyle(type.tint)
+            .help(type.title)
     }
 }
 
@@ -960,16 +965,16 @@ private struct LibraryGamePoster: View {
 
             HStack(spacing: 5) {
                 if !game.mainGames.isEmpty {
-                    LibraryTypePill(type: .mainGame)
+                    LibraryTypePill(type: .mainGame, compact: true)
                 }
                 if !game.updates.isEmpty {
-                    LibraryTypePill(type: .update)
+                    LibraryTypePill(type: .update, compact: true)
                 }
                 if !game.dlcs.isEmpty {
-                    LibraryTypePill(type: .dlc)
+                    LibraryTypePill(type: .dlc, compact: true)
                 }
                 if !game.others.isEmpty {
-                    LibraryTypePill(type: .other)
+                    LibraryTypePill(type: .other, compact: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -1769,6 +1774,19 @@ private extension LibraryContentType {
             "DLC"
         case .other:
             "Other"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .mainGame:
+            "Base"
+        case .update:
+            "Upd"
+        case .dlc:
+            "DLC"
+        case .other:
+            "More"
         }
     }
 
