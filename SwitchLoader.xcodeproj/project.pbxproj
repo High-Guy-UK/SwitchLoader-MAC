@@ -25,6 +25,7 @@
 		100000000000000000000010 /* TinfoilUSBInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000112 /* TinfoilUSBInstaller.swift */; };
 		100000000000000000000011 /* RCMPayloadLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000113 /* RCMPayloadLauncher.swift */; };
 		3CC9CB8430093D1700067410 /* NetworkReceiverService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC9CB8330093D1700067410 /* NetworkReceiverService.swift */; };
+		3CC9CB8530093D1700067410 /* SwitchLoaderUSBReceiverSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC9CB8630093D1700067410 /* SwitchLoaderUSBReceiverSender.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +76,7 @@
 		100000000000000000000200 /* SwitchLoader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwitchLoader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000201 /* SwitchLoaderCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SwitchLoaderCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		3CC9CB8330093D1700067410 /* NetworkReceiverService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkReceiverService.swift; sourceTree = "<group>"; };
+		3CC9CB8630093D1700067410 /* SwitchLoaderUSBReceiverSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchLoaderUSBReceiverSender.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +194,7 @@
 				100000000000000000000110 /* USBInstallConfiguration.swift */,
 				100000000000000000000111 /* USBDeviceConnection.swift */,
 				100000000000000000000112 /* TinfoilUSBInstaller.swift */,
+				3CC9CB8630093D1700067410 /* SwitchLoaderUSBReceiverSender.swift */,
 				100000000000000000000113 /* RCMPayloadLauncher.swift */,
 			);
 			path = USB;
@@ -334,6 +337,7 @@
 				10000000000000000000000E /* USBInstallConfiguration.swift in Sources */,
 				10000000000000000000000F /* USBDeviceConnection.swift in Sources */,
 				100000000000000000000010 /* TinfoilUSBInstaller.swift in Sources */,
+				3CC9CB8530093D1700067410 /* SwitchLoaderUSBReceiverSender.swift in Sources */,
 				100000000000000000000011 /* RCMPayloadLauncher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

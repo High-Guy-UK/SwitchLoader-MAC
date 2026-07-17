@@ -41,6 +41,9 @@
 - Game detail popups are larger and richer, with extra TGDB details, media, local file sections, English metadata hints, and manual matching for unmatched games.
 - Library carousel posters are slightly smaller and the visible scrollbar has been removed for a cleaner shelf layout.
 - Homebrew tab with a 50-entry GitHub starter catalog, saved HomebrewApps archive folder, ready/downloaded indicators, multi-select downloads, custom GitHub repo entries, and generated ready-to-copy homebrew folders.
+- SwitchLoader Receiver native `.nro` for installing generated Homebrew folders over USB into SD card homebrew paths.
+- Homebrew tab **Install to Switch** action for sending generated folders to SwitchLoader Receiver.
+- Launch splash screen for the macOS app with animated SwitchLoader handheld artwork.
 
 ### Tests
 

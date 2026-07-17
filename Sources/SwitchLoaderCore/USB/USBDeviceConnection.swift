@@ -110,17 +110,48 @@ final class USBDeviceConnection {
     func bulkWrite(endpoint: UInt8, data: Data, timeout: UInt32 = 5_050) throws {
         try data.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return }
-            var transferred: Int32 = 0
-            let result = libusb_bulk_transfer(
-                handle,
-                endpoint,
-                UnsafeMutablePointer(mutating: baseAddress.assumingMemoryBound(to: UInt8.self)),
-                Int32(data.count),
-                &transferred,
-                timeout
-            )
-            guard result == LIBUSB_SUCCESS.rawValue, transferred == data.count else {
-                throw USBInstallError.transferFailed("\(Self.errorName(result)); requested \(data.count), transferred \(transferred)")
+
+            var offset = 0
+            var lastProgress = Date()
+            let stallLimit: TimeInterval = 15
+
+            while offset < data.count {
+                var transferred: Int32 = 0
+                let remaining = data.count - offset
+                let result = libusb_bulk_transfer(
+                    handle,
+                    endpoint,
+                    UnsafeMutablePointer(mutating: baseAddress.advanced(by: offset).assumingMemoryBound(to: UInt8.self)),
+                    Int32(remaining),
+                    &transferred,
+                    timeout
+                )
+
+                if transferred > 0 {
+                    offset += Int(transferred)
+                    lastProgress = Date()
+                }
+
+                if result == LIBUSB_SUCCESS.rawValue {
+                    if transferred == 0, Date().timeIntervalSince(lastProgress) > stallLimit {
+                        throw USBInstallError.transferFailed("\(Self.errorName(result)); requested \(remaining), transferred \(transferred)")
+                    }
+                    if transferred == 0 {
+                        Thread.sleep(forTimeInterval: 0.002)
+                    }
+                    continue
+                }
+
+                if result == LIBUSB_ERROR_TIMEOUT.rawValue, Date().timeIntervalSince(lastProgress) <= stallLimit {
+                    Thread.sleep(forTimeInterval: 0.002)
+                    continue
+                }
+
+                if result == LIBUSB_ERROR_TIMEOUT.rawValue, transferred > 0 {
+                    continue
+                } else {
+                    throw USBInstallError.transferFailed("\(Self.errorName(result)); requested \(remaining), transferred \(transferred)")
+                }
             }
         }
     }

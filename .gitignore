@@ -20,6 +20,16 @@ SwitchLoaderReceiver/node_modules/
 SwitchLoaderReceiver/romfs/main.js
 SwitchLoaderReceiver/*.nro
 SwitchLoaderReceiver/*.nsp
+SwitchLoaderReceiver/dist/**/*.nro
+SwitchLoaderReceiver/dist/**/*.nsp
+
+# Native Switch receiver build output
+SwitchLoaderReceiverNative/build/
+SwitchLoaderReceiverNative/*.elf
+SwitchLoaderReceiverNative/*.nacp
+SwitchLoaderReceiverNative/*.nro
+SwitchLoaderReceiverNative/dist/**/*.nro
+SwitchLoaderReceiverNative/dist/**/*.nsp
 
 # Local editor state
 .vscode/

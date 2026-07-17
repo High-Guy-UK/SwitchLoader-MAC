@@ -149,7 +149,7 @@ struct ContentView: View {
                 Button {
                     model.startUSBInstall()
                 } label: {
-                    Label("Send", systemImage: "paperplane.fill")
+                    Label("Awoo/Tinfoil", systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -167,30 +167,13 @@ struct ContentView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("SwitchLoader Receiver")
+                Text("Awoo / Tinfoil")
                     .font(.subheadline.bold())
 
-                Text(model.receiverInstruction)
+                Text("Use this tab with an existing USB installer. SwitchLoader Receiver is now for Homebrew folders.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                if let receiverServerURL = model.receiverServerURL {
-                    Text(receiverServerURL)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                }
-
-                Button {
-                    model.startReceiverServer()
-                } label: {
-                    Label("Start Receiver Server", systemImage: "network")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(!model.canStartReceiverServer)
             }
         }
         .padding(16)
@@ -480,6 +463,15 @@ struct ContentView: View {
                         Label("Show Generated", systemImage: "folder")
                             .frame(maxWidth: .infinity)
                     }
+
+                    Button {
+                        model.sendGeneratedHomebrewFolderToReceiver()
+                    } label: {
+                        Label("Install to Switch", systemImage: "cable.connector")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSendGeneratedHomebrewFolderToReceiver)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {

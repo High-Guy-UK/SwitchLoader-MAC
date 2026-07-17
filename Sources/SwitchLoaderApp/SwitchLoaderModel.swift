@@ -351,6 +351,10 @@ final class SwitchLoaderModel: ObservableObject {
         !selectedFiles.isEmpty && status != .running
     }
 
+    var canSendGeneratedHomebrewFolderToReceiver: Bool {
+        generatedHomebrewFolderURL != nil && status != .running
+    }
+
     var canPushRCMPayload: Bool {
         selectedPayloadURL != nil && isRCMDeviceConnected && status != .running
     }
@@ -810,6 +814,38 @@ final class SwitchLoaderModel: ObservableObject {
                 await MainActor.run {
                     self.status = .failed(error.localizedDescription)
                     self.receiverInstruction = "Fix the issue below, then start the receiver server again."
+                    self.appendLog(error.localizedDescription, .failure)
+                }
+            }
+        }
+    }
+
+    func sendGeneratedHomebrewFolderToReceiver() {
+        guard canSendGeneratedHomebrewFolderToReceiver, let generatedHomebrewFolderURL else { return }
+
+        status = .running
+        progress = 0
+        homebrewMessage = "Open SwitchLoader Receiver on the Switch, connect USB, then keep it waiting."
+        appendLog("Installing generated Homebrew folder with SwitchLoader Receiver.", .info)
+
+        Task.detached(priority: .userInitiated) {
+            let sender = SwitchLoaderUSBReceiverSender()
+            do {
+                try sender.sendHomebrewFolder(generatedHomebrewFolderURL) { event in
+                    Task { @MainActor in
+                        self.handleUSBEvent(event)
+                    }
+                }
+                await MainActor.run {
+                    self.status = .completed
+                    self.progress = 1
+                    self.homebrewMessage = "Homebrew install transfer complete."
+                    self.appendLog("SwitchLoader Receiver Homebrew install finished.", .success)
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = .failed(error.localizedDescription)
+                    self.homebrewMessage = "Fix the issue below, set the receiver waiting again, then send."
                     self.appendLog(error.localizedDescription, .failure)
                 }
             }

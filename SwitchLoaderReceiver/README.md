@@ -1,25 +1,23 @@
-# SwitchLoader Receiver
+# SwitchLoader Receiver JS Prototype
 
-SwitchLoader Receiver is the Switch-side companion app for the SwitchLoader Mac app.
+This folder contains the nx.js UI prototype for the Switch-side companion app.
 
-This first milestone is an nx.js prototype. It:
+The installable USB backend currently lives in:
 
-- Fetches a `manifest.json` published by the Mac app.
-- Shows a clean queue UI on the Switch.
-- Downloads the selected queue into `sdmc:/switch/SwitchLoaderReceiver/inbox/`.
-- Tells the Mac server to stop when the transfer is complete.
+```text
+../SwitchLoaderReceiverNative
+```
 
-It does not install titles yet. The native installer layer should be designed separately so the project stays focused on lawful personal dumps and homebrew.
+Use the native receiver for the Homebrew install workflow:
 
-## Mac Workflow
+1. Open receiver on the Switch.
+2. Connect USB.
+3. Generate a Homebrew folder in the Mac app.
+4. Press **Install to Switch** in the Homebrew tab.
 
-1. Open SwitchLoader on macOS.
-2. Add files to the install queue.
-3. Choose **Start Receiver Server**.
-4. Copy the shown `http://.../manifest.json` address into `src/config.ts` for now.
-5. Build and launch the receiver on the Switch.
+The JS app remains useful as the visual front-end direction. The next integration step is to have the native backend expose transfer state to the UI layer, or to port the UI styling into a native renderer.
 
-## Build
+## Prototype Build
 
 Install Node.js, then from this folder:
 
@@ -29,11 +27,8 @@ npm run build
 npm run nro
 ```
 
-The nx.js templates use `nxjs-nro` for `.nro` packaging. A slim build expects the shared nx.js runtime on the SD card; use a fat build later if you want a self-contained `.nro`.
-
 ## Next Milestones
 
-- Add on-device URL entry with the Switch keyboard.
-- Add multi-file selection and cancel/resume controls.
-- Add USB receiver support.
-- Add a native C++/libnx installer bridge after the file receiver is stable.
+- Replace the IP-entry/network prototype with a native-backend-driven UI.
+- Add cancel/resume controls and richer progress display.
+- Keep this prototype aligned with the native Homebrew receiver UI.

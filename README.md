@@ -15,7 +15,7 @@ The app currently includes:
 - Split file creation.
 - Split file merge.
 - Library scanning for NSP, NSZ, XCI, XCZ, and split folders inside a chosen folder and its subfolders.
-- A Homebrew tab with a built-in GitHub starter catalog, custom repository entries, release asset downloads, and ready-to-copy SD card folders.
+- A Homebrew tab with a built-in GitHub starter catalog, custom repository entries, release asset downloads, ready-to-copy SD card folders, and USB install to SwitchLoader Receiver.
 - RCM payload pushing for `.bin` payloads while the device is in RCM mode.
 - A SwiftUI workflow with separate Install, Library, Homebrew, RCM, and Log tabs.
 
@@ -51,7 +51,7 @@ swift test
 
 ## Current Scope
 
-USB install currently targets Awoo/Tinfoil-compatible installers. The Homebrew workflow downloads public GitHub release assets and assembles selected apps into a folder you can copy to an SD card. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and has been tested with Hekate payload launching over USB.
+USB install currently targets Awoo/Tinfoil-compatible installers from the Install tab. The Homebrew workflow downloads public GitHub release assets, assembles selected apps into an SD card folder, and can send the generated folder over USB to SwitchLoader Receiver for direct placement under `sdmc:/switch`, `sdmc:/atmosphere`, and related homebrew paths. RCM payload injection is implemented from the CrystalRCM/fusee-style flow and has been tested with Hekate payload launching over USB.
 
 ## Attribution
 
