@@ -17,7 +17,7 @@ INCLUDES    := include
 
 APP_TITLE   := SwitchLoader Receiver
 APP_AUTHOR  := SwitchLoader
-APP_VERSION := 1.2.0
+APP_VERSION := 1.2.1
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
