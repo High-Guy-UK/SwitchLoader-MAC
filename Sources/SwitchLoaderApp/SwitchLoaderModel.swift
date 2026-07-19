@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import SwitchLoaderCore
 
 enum LibraryContentType: Hashable, Sendable {
@@ -22,10 +21,36 @@ enum LibraryContentType: Hashable, Sendable {
     }
 }
 
+enum MetadataProviderKind: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
+    case theGamesDB = "TheGamesDB"
+    case screenScraper = "ScreenScraper"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .theGamesDB:
+            return "TGDB"
+        case .screenScraper:
+            return "ScreenScraper"
+        }
+    }
+
+    var matchTitle: String {
+        switch self {
+        case .theGamesDB:
+            return "Fix TGDB Match"
+        case .screenScraper:
+            return "Fix ScreenScraper Match"
+        }
+    }
+}
+
 struct LibraryItem: Identifiable, Hashable, Sendable {
     let url: URL
     let title: String
     let contentType: LibraryContentType
+    let size: UInt64
 
     var id: URL {
         url
@@ -37,6 +62,7 @@ struct LibraryGame: Identifiable, Hashable, Sendable {
     let title: String
     var items: [LibraryItem]
     var metadata: GameMetadata?
+    var sourceMetadata: [String: GameMetadata] = [:]
 
     var mainGames: [LibraryItem] {
         items.filter { $0.contentType == .mainGame }
@@ -64,11 +90,32 @@ struct LibraryGame: Identifiable, Hashable, Sendable {
     }
 
     var heroImageURL: URL? {
-        metadata?.bannerImageURL ?? metadata?.artworkImageURL ?? metadata?.screenshotImageURLs.first ?? metadata?.coverImageURL
+        metadata?.artworkImageURL ?? metadata?.screenshotImageURLs.first
     }
 
     var posterImageURL: URL? {
         metadata?.coverImageURL ?? metadata?.artworkImageURL ?? metadata?.bannerImageURL ?? metadata?.screenshotImageURLs.first
+    }
+
+    func hasMetadata(from provider: MetadataProviderKind) -> Bool {
+        if sourceMetadata[provider.rawValue] != nil {
+            return true
+        }
+        if sourceMetadata.values.contains(where: { $0.provider == provider.rawValue }) {
+            return true
+        }
+        guard let metadata else { return false }
+        if metadata.provider == provider.rawValue {
+            return true
+        }
+
+        switch provider {
+        case .theGamesDB:
+            return metadata.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+        case .screenScraper:
+            return metadata.providerID.contains(":")
+                || metadata.provider.localizedCaseInsensitiveContains("ScreenScraper")
+        }
     }
 }
 
@@ -92,6 +139,82 @@ struct GameMetadata: Codable, Hashable, Sendable {
     let coverImageURL: URL?
     let logoImageURL: URL?
     let screenshotImageURLs: [URL]
+
+    var lookupPlatformID: Int? {
+        if provider == "TheGamesDB" {
+            return TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+        }
+        if provider == "ScreenScraper" {
+            return providerID.split(separator: ":").last.flatMap { Int($0) }
+        }
+        return nil
+    }
+
+    var isMissingRichArtworkOrDetails: Bool {
+        let hasArtworkSet = coverImageURL != nil
+            && artworkImageURL != nil
+            && logoImageURL != nil
+            && bannerImageURL != nil
+            && !screenshotImageURLs.isEmpty
+        let hasDetails = summary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && !genres.isEmpty
+            && (!developers.isEmpty || !publishers.isEmpty)
+        return !hasArtworkSet || !hasDetails
+    }
+
+    func fillingMissingValues(from fallback: GameMetadata) -> GameMetadata {
+        GameMetadata(
+            provider: provider,
+            providerID: providerID,
+            matchedTitle: firstNonEmpty(matchedTitle, fallback.matchedTitle) ?? matchedTitle,
+            summary: firstNonEmpty(summary, fallback.summary),
+            releaseDate: firstNonEmpty(releaseDate, fallback.releaseDate),
+            platformName: firstNonEmpty(platformName, fallback.platformName),
+            rating: firstNonEmpty(rating, fallback.rating),
+            players: firstNonEmpty(players, fallback.players),
+            coop: firstNonEmpty(coop, fallback.coop),
+            youtubeURL: youtubeURL ?? fallback.youtubeURL,
+            aliases: mergedStrings(aliases ?? [], fallback.aliases ?? []),
+            genres: mergedStrings(genres, fallback.genres),
+            developers: mergedStrings(developers, fallback.developers),
+            publishers: mergedStrings(publishers, fallback.publishers),
+            bannerImageURL: bannerImageURL ?? fallback.bannerImageURL,
+            artworkImageURL: artworkImageURL ?? fallback.artworkImageURL,
+            coverImageURL: coverImageURL ?? fallback.coverImageURL,
+            logoImageURL: logoImageURL ?? fallback.logoImageURL,
+            screenshotImageURLs: mergedURLs(screenshotImageURLs, fallback.screenshotImageURLs)
+        )
+    }
+
+    private func firstNonEmpty(_ preferred: String?, _ fallback: String?) -> String? {
+        if let preferred, preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return preferred
+        }
+        if let fallback, fallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return fallback
+        }
+        return nil
+    }
+
+    private func mergedStrings(_ preferred: [String], _ fallback: [String]) -> [String] {
+        var seen = Set<String>()
+        return (preferred + fallback).filter { value in
+            let key = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard key.isEmpty == false, seen.contains(key) == false else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private func mergedURLs(_ preferred: [URL], _ fallback: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return (preferred + fallback).filter { url in
+            let key = url.absoluteString
+            guard seen.contains(key) == false else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
 }
 
 struct GameMetadataMatch: Identifiable, Hashable, Sendable {
@@ -115,6 +238,27 @@ struct GameMetadataMatch: Identifiable, Hashable, Sendable {
     }
 }
 
+struct ScreenScraperCredentials: Codable, Hashable, Sendable {
+    var devUsername: String
+    var debugPassword: String
+    var softwareName: String
+    var memberUsername: String
+    var memberPassword: String
+
+    var isComplete: Bool {
+        !devUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !debugPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !softwareName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !memberUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !memberPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private struct MetadataProviderCredentials: Codable, Sendable {
+    var theGamesDBAPIKey: String?
+    var screenScraperCredentials: ScreenScraperCredentials?
+}
+
 enum MetadataLookupState: String, Codable, Hashable, Sendable {
     case success
     case noMatch
@@ -128,16 +272,33 @@ struct GameMetadataCacheEntry: Codable, Hashable, Sendable {
     let attemptedAt: Date
     let lookupPlatformID: Int?
     let metadata: GameMetadata?
+    let sourceMetadata: [String: GameMetadata]?
     let message: String?
+
+    var availableSourceMetadata: [String: GameMetadata] {
+        if let sourceMetadata, !sourceMetadata.isEmpty {
+            return sourceMetadata
+        }
+        if let metadata {
+            return [metadata.provider: metadata]
+        }
+        return [:]
+    }
 }
 
 enum MetadataLookupError: LocalizedError {
     case missingAPIKey
+    case providerRejected(String)
+    case providerTimedOut(String)
 
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            "Add a TGDB API key before matching artwork."
+            "Add a metadata account before matching artwork."
+        case let .providerRejected(message):
+            message
+        case let .providerTimedOut(provider):
+            "\(provider) took too long to answer. Try a shorter title, an alternate spelling, or search again in a moment."
         }
     }
 }
@@ -273,9 +434,12 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var libraryGames: [LibraryGame] = []
     @Published var isScanningLibrary = false
     @Published var isFetchingMetadata = false
+    @Published var metadataProgress = 0.0
+    @Published var metadataStatusDetail = ""
     @Published var libraryMessage = "Choose your NSP/XCI folder to build the library."
     @Published var metadataMessage = "Add a TGDB API key to fetch artwork and game details."
     @Published var hasTheGamesDBAPIKey = false
+    @Published var hasScreenScraperCredentials = false
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
     @Published var selectedPayloadURL: URL?
     @Published var rcmPayloadDirectory: URL?
@@ -298,9 +462,9 @@ final class SwitchLoaderModel: ObservableObject {
     private nonisolated static let homebrewArchiveDirectoryBookmarkDefaultsKey = "SwitchLoader.homebrewArchiveDirectoryBookmark"
     private nonisolated static let customHomebrewEntriesDefaultsKey = "SwitchLoader.customHomebrewEntries"
     private nonisolated static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
-    private nonisolated static let gamesDBKeychainService = "SwitchLoader.TheGamesDB"
-    private nonisolated static let gamesDBKeychainAccount = "apiKey"
     private var rcmMonitorTask: Task<Void, Never>?
+    private var cachedTheGamesDBAPIKey: String?
+    private var cachedScreenScraperCredentials: ScreenScraperCredentials?
     private var suppressNextRCMDisconnectLog = false
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
     private nonisolated static let libraryFolderTypes: [String: LibraryContentType] = [
@@ -330,8 +494,11 @@ final class SwitchLoaderModel: ObservableObject {
             refreshHomebrewArchiveStatus()
         }
 
-        hasTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()?.isEmpty == false
-        metadataMessage = hasTheGamesDBAPIKey ? "Metadata ready." : "Add a TGDB API key to fetch artwork and game details."
+        cachedTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()
+        cachedScreenScraperCredentials = Self.loadScreenScraperCredentials()
+        hasTheGamesDBAPIKey = cachedTheGamesDBAPIKey?.isEmpty == false
+        hasScreenScraperCredentials = cachedScreenScraperCredentials?.isComplete == true
+        metadataMessage = hasAnyMetadataProvider ? "Metadata ready." : "Add a metadata account to fetch artwork and game details."
         startRCMMonitor()
 
         if libraryDirectory != nil {
@@ -357,6 +524,10 @@ final class SwitchLoaderModel: ObservableObject {
 
     var canPushRCMPayload: Bool {
         selectedPayloadURL != nil && isRCMDeviceConnected && status != .running
+    }
+
+    var hasAnyMetadataProvider: Bool {
+        hasTheGamesDBAPIKey || hasScreenScraperCredentials
     }
 
     var homebrewCatalog: [HomebrewCatalogEntry] {
@@ -540,13 +711,19 @@ final class SwitchLoaderModel: ObservableObject {
         guard let libraryDirectory else {
             libraryItems = []
             libraryGames = []
+            metadataProgress = 0
+            metadataStatusDetail = ""
             libraryMessage = "Choose your NSP/XCI folder to build the library."
             return
         }
 
         isScanningLibrary = true
+        metadataProgress = 0
+        metadataStatusDetail = ""
         libraryMessage = "Scanning library..."
-        let apiKey = Self.loadTheGamesDBAPIKey()
+        let apiKey = cachedTheGamesDBAPIKey
+        let screenScraperCredentials = cachedScreenScraperCredentials
+        let hasMetadataProvider = apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true
 
         Task.detached(priority: .userInitiated) { [libraryDirectory] in
             do {
@@ -554,75 +731,110 @@ final class SwitchLoaderModel: ObservableObject {
                 let cache = Self.loadMetadataCache()
                 let games = Self.groupLibraryGames(from: items, cache: cache)
                 let enrichedCount = games.filter { $0.metadata != nil }.count
-                let untriedGames = games.filter { cache[$0.id] == nil }
+                let gamesNeedingMetadata = games.filter {
+                    Self.needsMetadataRefresh(
+                        cache[$0.id],
+                        hasTheGamesDB: apiKey?.isEmpty == false,
+                        hasScreenScraper: screenScraperCredentials?.isComplete == true
+                    )
+                }
                 await MainActor.run {
                     self.libraryItems = items
                     self.libraryGames = games
                     self.isScanningLibrary = false
                     self.libraryMessage = items.isEmpty ? "No install files found in this folder." : "Found \(games.count) game\(games.count == 1 ? "" : "s") and \(items.count) install item\(items.count == 1 ? "" : "s")."
                     if games.isEmpty {
-                        self.metadataMessage = apiKey?.isEmpty == false ? "No games to enrich yet." : "Add a TGDB API key to fetch artwork and game details."
-                    } else if untriedGames.isEmpty {
-                        self.metadataMessage = enrichedCount == 0 ? "Metadata cache is up to date. No TGDB calls needed." : "Artwork/details loaded from cache for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s"). No TGDB calls needed."
-                    } else if apiKey?.isEmpty == false {
-                        self.metadataMessage = "\(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s") need metadata."
+                        self.metadataMessage = hasMetadataProvider ? "No games to enrich yet." : "Add a metadata account to fetch artwork and game details."
+                    } else if gamesNeedingMetadata.isEmpty {
+                        self.metadataMessage = enrichedCount == 0 ? "Metadata cache is up to date. No database calls needed." : "Artwork/details loaded from cache for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s"). No database calls needed."
+                    } else if hasMetadataProvider {
+                        self.metadataMessage = "\(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s") need richer metadata."
                     } else {
-                        self.metadataMessage = "Add a TGDB key to fetch artwork for \(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s")."
+                        self.metadataMessage = "Add a metadata account to fetch artwork for \(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s")."
                     }
                     self.appendLog("Library scan found \(games.count) game\(games.count == 1 ? "" : "s").", .success)
                 }
 
-                guard let apiKey, !apiKey.isEmpty, !untriedGames.isEmpty else { return }
+                guard hasMetadataProvider, !gamesNeedingMetadata.isEmpty else { return }
 
                 await MainActor.run {
                     self.isFetchingMetadata = true
-                    self.metadataMessage = "Fetching artwork/details for \(untriedGames.count) new game\(untriedGames.count == 1 ? "" : "s"). Cached games are skipped."
+                    self.metadataProgress = 0
+                    self.metadataStatusDetail = "Preparing metadata lookups..."
+                    self.metadataMessage = "Fetching richer artwork/details for \(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s")."
                 }
 
                 var updatedCache = cache
-                let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
-                for game in untriedGames where updatedCache[game.id] == nil {
+                let gamesToFetch = gamesNeedingMetadata
+                let totalToFetch = gamesToFetch.count
+                for (offset, game) in gamesToFetch.enumerated() {
+                    let current = offset + 1
+                    await MainActor.run {
+                        self.metadataProgress = totalToFetch > 0 ? Double(offset) / Double(totalToFetch) : 0
+                        self.metadataStatusDetail = "Matching \(current) of \(totalToFetch): \(game.title)"
+                    }
+
                     do {
-                        if let metadata = try await provider.metadata(for: game.title) {
+                        let sourceMetadata = try await Self.metadataSources(
+                            for: game.title,
+                            theGamesDBAPIKey: apiKey,
+                            screenScraperCredentials: screenScraperCredentials
+                        )
+                        if let metadata = Self.combinedMetadata(from: sourceMetadata) {
                             updatedCache[game.id] = GameMetadataCacheEntry(
                                 title: game.title,
                                 provider: metadata.provider,
                                 state: .success,
                                 attemptedAt: Date(),
-                                lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
+                                lookupPlatformID: metadata.lookupPlatformID,
                                 metadata: metadata,
+                                sourceMetadata: sourceMetadata,
                                 message: nil
                             )
                             let gameID = game.id
                             await MainActor.run {
                                 if let index = self.libraryGames.firstIndex(where: { $0.id == gameID }) {
                                     self.libraryGames[index].metadata = metadata
+                                    self.libraryGames[index].sourceMetadata = sourceMetadata
                                 }
+                                let providers = sourceMetadata.keys.sorted().joined(separator: " + ")
+                                self.metadataStatusDetail = "Matched \(current) of \(totalToFetch): \(metadata.matchedTitle) via \(providers)"
                             }
                         } else {
                             updatedCache[game.id] = GameMetadataCacheEntry(
                                 title: game.title,
-                                provider: "TheGamesDB",
+                                provider: "Metadata",
                                 state: .noMatch,
                                 attemptedAt: Date(),
-                                lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
+                                lookupPlatformID: nil,
                                 metadata: nil,
-                                message: "No Nintendo Switch TGDB match found."
+                                sourceMetadata: nil,
+                                message: "No Nintendo Switch metadata match found."
                             )
+                            await MainActor.run {
+                                self.metadataStatusDetail = "No match for \(current) of \(totalToFetch): \(game.title)"
+                            }
                         }
                     } catch {
-                        updatedCache[game.id] = GameMetadataCacheEntry(
-                            title: game.title,
-                            provider: "TheGamesDB",
-                            state: .failed,
-                            attemptedAt: Date(),
-                            lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
-                            metadata: nil,
-                            message: error.localizedDescription
-                        )
+                            updatedCache[game.id] = GameMetadataCacheEntry(
+                                title: game.title,
+                                provider: "Metadata",
+                                state: .failed,
+                                attemptedAt: Date(),
+                                lookupPlatformID: nil,
+                                metadata: nil,
+                                sourceMetadata: nil,
+                                message: error.localizedDescription
+                            )
+                        await MainActor.run {
+                            self.metadataStatusDetail = "Failed \(current) of \(totalToFetch): \(game.title)"
+                        }
                     }
 
                     try? Self.saveMetadataCache(updatedCache)
+                    await MainActor.run {
+                        self.metadataProgress = totalToFetch > 0 ? Double(current) / Double(totalToFetch) : 1
+                    }
                 }
 
                 let currentGameIDs = Set(games.map(\.id))
@@ -632,13 +844,16 @@ final class SwitchLoaderModel: ObservableObject {
                 await MainActor.run {
                     let enrichedCount = self.libraryGames.filter { $0.metadata != nil }.count
                     self.isFetchingMetadata = false
+                    self.metadataProgress = 1
                     if enrichedCount == 0 {
+                        self.metadataStatusDetail = "No metadata matches found."
                         self.metadataMessage = "Metadata cache updated. No matched artwork yet; cached misses will not be retried automatically."
                     } else {
                         var detail = "Artwork/details cached for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s")."
                         if noMatchCount > 0 || failedCount > 0 {
                             detail += " \(noMatchCount + failedCount) unmatched/failed lookup\(noMatchCount + failedCount == 1 ? "" : "s") cached too."
                         }
+                        self.metadataStatusDetail = "Metadata scan complete."
                         self.metadataMessage = detail
                     }
                 }
@@ -648,6 +863,8 @@ final class SwitchLoaderModel: ObservableObject {
                     self.libraryGames = []
                     self.isScanningLibrary = false
                     self.isFetchingMetadata = false
+                    self.metadataProgress = 0
+                    self.metadataStatusDetail = "Metadata scan stopped."
                     self.libraryMessage = error.localizedDescription
                     self.appendLog(error.localizedDescription, .failure)
                 }
@@ -680,9 +897,72 @@ final class SwitchLoaderModel: ObservableObject {
     func saveTheGamesDBAPIKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         Self.saveTheGamesDBAPIKey(trimmed.isEmpty ? nil : trimmed)
+        cachedTheGamesDBAPIKey = trimmed.isEmpty ? nil : trimmed
         hasTheGamesDBAPIKey = !trimmed.isEmpty
-        metadataMessage = hasTheGamesDBAPIKey ? "TGDB key saved. Only new, uncached games will call TGDB." : "Add a TGDB API key to fetch artwork and game details."
+        metadataMessage = hasAnyMetadataProvider ? "Metadata settings saved. Only new, uncached games will call databases." : "Add a metadata account to fetch artwork and game details."
         appendLog(hasTheGamesDBAPIKey ? "TGDB API key saved." : "TGDB API key cleared.", .info)
+    }
+
+    func saveScreenScraperCredentials(_ credentials: ScreenScraperCredentials) {
+        let trimmed = ScreenScraperCredentials(
+            devUsername: credentials.devUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+            debugPassword: credentials.debugPassword.trimmingCharacters(in: .whitespacesAndNewlines),
+            softwareName: credentials.softwareName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "SwitchLoader" : credentials.softwareName.trimmingCharacters(in: .whitespacesAndNewlines),
+            memberUsername: credentials.memberUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+            memberPassword: credentials.memberPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        Self.saveScreenScraperCredentials(trimmed.isComplete ? trimmed : nil)
+        cachedScreenScraperCredentials = trimmed.isComplete ? trimmed : nil
+        hasScreenScraperCredentials = trimmed.isComplete
+        metadataMessage = hasAnyMetadataProvider ? "Metadata settings saved. Only new, uncached games will call databases." : "Add a metadata account to fetch artwork and game details."
+        appendLog(hasScreenScraperCredentials ? "ScreenScraper credentials saved." : "ScreenScraper credentials cleared.", .info)
+    }
+
+    func loadScreenScraperSettingsForEditing() -> ScreenScraperCredentials {
+        if cachedScreenScraperCredentials == nil {
+            cachedScreenScraperCredentials = Self.loadScreenScraperCredentials()
+            hasScreenScraperCredentials = cachedScreenScraperCredentials?.isComplete == true
+        }
+        return cachedScreenScraperCredentials ?? ScreenScraperCredentials(
+            devUsername: "",
+            debugPassword: "",
+            softwareName: "SwitchLoader",
+            memberUsername: "",
+            memberPassword: ""
+        )
+    }
+
+    func loadTheGamesDBAPIKeyForEditing() -> String {
+        if cachedTheGamesDBAPIKey == nil {
+            cachedTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()
+            hasTheGamesDBAPIKey = cachedTheGamesDBAPIKey?.isEmpty == false
+        }
+        return cachedTheGamesDBAPIKey ?? ""
+    }
+
+    func testTheGamesDBAPIKey(_ key: String) async throws -> String {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MetadataLookupError.providerRejected("Enter a TheGamesDB API key first.")
+        }
+
+        let result = try await TheGamesDBMetadataProvider(apiKey: trimmed).testConnection()
+        return result
+    }
+
+    func testScreenScraperCredentials(_ credentials: ScreenScraperCredentials) async throws -> String {
+        let trimmed = ScreenScraperCredentials(
+            devUsername: credentials.devUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+            debugPassword: credentials.debugPassword.trimmingCharacters(in: .whitespacesAndNewlines),
+            softwareName: credentials.softwareName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "SwitchLoader" : credentials.softwareName.trimmingCharacters(in: .whitespacesAndNewlines),
+            memberUsername: credentials.memberUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+            memberPassword: credentials.memberPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        guard trimmed.isComplete else {
+            throw MetadataLookupError.providerRejected("Enter your ScreenScraper username and password. If this development build has no bundled app credentials yet, also open Advanced app credentials and fill in Dev username, Debug password, and Software name.")
+        }
+
+        return try await ScreenScraperMetadataProvider(credentials: trimmed).testConnection()
     }
 
     func refreshLibraryMetadata() {
@@ -690,29 +970,62 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     func searchMetadataMatches(for query: String) async throws -> [GameMetadataMatch] {
-        guard let apiKey = Self.loadTheGamesDBAPIKey(), !apiKey.isEmpty else {
+        let apiKey = cachedTheGamesDBAPIKey
+        let screenScraperCredentials = cachedScreenScraperCredentials
+        guard apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true else {
             throw MetadataLookupError.missingAPIKey
         }
 
-        let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
-        return try await provider.matches(for: query)
+        return try await Self.matches(
+            for: query,
+            theGamesDBAPIKey: apiKey,
+            screenScraperCredentials: screenScraperCredentials
+        )
+    }
+
+    func searchMetadataMatches(for query: String, provider: MetadataProviderKind) async throws -> [GameMetadataMatch] {
+        let apiKey = cachedTheGamesDBAPIKey
+        let screenScraperCredentials = cachedScreenScraperCredentials
+
+        switch provider {
+        case .theGamesDB:
+            guard apiKey?.isEmpty == false else { throw MetadataLookupError.missingAPIKey }
+            return try await Self.matches(
+                for: query,
+                theGamesDBAPIKey: apiKey,
+                screenScraperCredentials: nil
+            )
+        case .screenScraper:
+            guard screenScraperCredentials?.isComplete == true else { throw MetadataLookupError.missingAPIKey }
+            return try await Self.matches(
+                for: query,
+                theGamesDBAPIKey: nil,
+                screenScraperCredentials: screenScraperCredentials
+            )
+        }
     }
 
     func applyMetadataMatch(_ match: GameMetadataMatch, to game: LibraryGame) async throws {
-        guard let apiKey = Self.loadTheGamesDBAPIKey(), !apiKey.isEmpty else {
+        let apiKey = cachedTheGamesDBAPIKey
+        let screenScraperCredentials = cachedScreenScraperCredentials
+        guard apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true else {
             throw MetadataLookupError.missingAPIKey
         }
 
-        let provider = TheGamesDBMetadataProvider(apiKey: apiKey)
-        let metadata = try await provider.metadata(for: match)
+        let metadata = try await Self.metadata(
+            for: match,
+            theGamesDBAPIKey: apiKey,
+            screenScraperCredentials: screenScraperCredentials
+        )
         var cache = Self.loadMetadataCache()
         cache[game.id] = GameMetadataCacheEntry(
             title: game.title,
             provider: metadata.provider,
             state: .success,
             attemptedAt: Date(),
-            lookupPlatformID: TheGamesDBMetadataProvider.nintendoSwitchPlatformID,
+            lookupPlatformID: metadata.lookupPlatformID,
             metadata: metadata,
+            sourceMetadata: [metadata.provider: metadata],
             message: "Manual match selected."
         )
         try Self.saveMetadataCache(cache)
@@ -721,7 +1034,42 @@ final class SwitchLoaderModel: ObservableObject {
             libraryGames[index].metadata = metadata
         }
         metadataMessage = "Manual match saved for \(game.title)."
-        appendLog("Manual TGDB match saved for \(game.title).", .success)
+        appendLog("Manual \(metadata.provider) match saved for \(game.title).", .success)
+    }
+
+    func applyMetadataMatch(_ match: GameMetadataMatch, to game: LibraryGame, provider: MetadataProviderKind) async throws {
+        let apiKey = cachedTheGamesDBAPIKey
+        let screenScraperCredentials = cachedScreenScraperCredentials
+
+        let matchedMetadata = try await Self.metadata(
+            for: match,
+            theGamesDBAPIKey: provider == .theGamesDB ? apiKey : nil,
+            screenScraperCredentials: provider == .screenScraper ? screenScraperCredentials : nil
+        )
+
+        var cache = Self.loadMetadataCache()
+        var sourceMetadata = cache[game.id]?.availableSourceMetadata ?? game.sourceMetadata
+        sourceMetadata[provider.rawValue] = matchedMetadata
+        let combinedMetadata = Self.combinedMetadata(from: sourceMetadata) ?? matchedMetadata
+
+        cache[game.id] = GameMetadataCacheEntry(
+            title: game.title,
+            provider: combinedMetadata.provider,
+            state: .success,
+            attemptedAt: Date(),
+            lookupPlatformID: combinedMetadata.lookupPlatformID,
+            metadata: combinedMetadata,
+            sourceMetadata: sourceMetadata,
+            message: "Manual \(provider.title) match selected."
+        )
+        try Self.saveMetadataCache(cache)
+
+        if let index = libraryGames.firstIndex(where: { $0.id == game.id }) {
+            libraryGames[index].metadata = combinedMetadata
+            libraryGames[index].sourceMetadata = sourceMetadata
+        }
+        metadataMessage = "\(provider.title) match saved for \(game.title)."
+        appendLog("Manual \(provider.title) match saved for \(game.title).", .success)
     }
 
     func setRCMPayload(_ url: URL) {
@@ -1078,7 +1426,9 @@ final class SwitchLoaderModel: ObservableObject {
 
             if values?.isDirectory == true {
                 if isSplitDirectory(url) {
-                    items.append(libraryItem(for: url, libraryRoot: directory, itemIsDirectory: true))
+                    if let item = try? libraryItem(for: url, libraryRoot: directory, itemIsDirectory: true) {
+                        items.append(item)
+                    }
                     enumerator.skipDescendants()
                 }
                 continue
@@ -1086,7 +1436,9 @@ final class SwitchLoaderModel: ObservableObject {
 
             guard values?.isRegularFile == true else { continue }
             guard libraryFileExtensions.contains(url.pathExtension.lowercased()) else { continue }
-            items.append(libraryItem(for: url, libraryRoot: directory, itemIsDirectory: false))
+            if let item = try? libraryItem(for: url, libraryRoot: directory, itemIsDirectory: false) {
+                items.append(item)
+            }
         }
 
         return items.sorted {
@@ -1100,9 +1452,10 @@ final class SwitchLoaderModel: ObservableObject {
         }
     }
 
-    private nonisolated static func libraryItem(for url: URL, libraryRoot: URL, itemIsDirectory: Bool) -> LibraryItem {
+    private nonisolated static func libraryItem(for url: URL, libraryRoot: URL, itemIsDirectory: Bool) throws -> LibraryItem {
         let metadata = libraryMetadata(for: url, libraryRoot: libraryRoot, itemIsDirectory: itemIsDirectory)
-        return LibraryItem(url: url, title: metadata.title, contentType: metadata.contentType)
+        let size = try SwitchTransferFile(url: url).size
+        return LibraryItem(url: url, title: metadata.title, contentType: metadata.contentType, size: size)
     }
 
     private nonisolated static func libraryMetadata(
@@ -1263,11 +1616,29 @@ final class SwitchLoaderModel: ObservableObject {
                 return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
             }
             let title = sortedItems.first?.title ?? id
-            return LibraryGame(id: id, title: title, items: sortedItems, metadata: cache[id]?.metadata)
+            let sourceMetadata = cache[id]?.availableSourceMetadata ?? [:]
+            return LibraryGame(
+                id: id,
+                title: title,
+                items: sortedItems,
+                metadata: combinedMetadata(from: sourceMetadata) ?? cache[id]?.metadata,
+                sourceMetadata: sourceMetadata
+            )
         }
         .sorted {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
+    }
+
+    private nonisolated static func combinedMetadata(from sources: [String: GameMetadata]) -> GameMetadata? {
+        let screenScraper = sources[MetadataProviderKind.screenScraper.rawValue]
+        let theGamesDB = sources[MetadataProviderKind.theGamesDB.rawValue]
+
+        if let screenScraper, let theGamesDB {
+            return screenScraper.fillingMissingValues(from: theGamesDB)
+        }
+
+        return screenScraper ?? theGamesDB ?? sources.values.first
     }
 
     private nonisolated static func stableGameID(for title: String) -> String {
@@ -1278,11 +1649,141 @@ final class SwitchLoaderModel: ObservableObject {
             .lowercased()
     }
 
+    private nonisolated static func metadataSources(
+        for title: String,
+        theGamesDBAPIKey: String?,
+        screenScraperCredentials: ScreenScraperCredentials?
+    ) async throws -> [String: GameMetadata] {
+        var sources: [String: GameMetadata] = [:]
+        var lastError: Error?
+
+        if let screenScraperCredentials, screenScraperCredentials.isComplete {
+            do {
+                if let metadata = try await ScreenScraperMetadataProvider(credentials: screenScraperCredentials).metadata(for: title) {
+                    sources[MetadataProviderKind.screenScraper.rawValue] = metadata
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty {
+            do {
+                if let metadata = try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).metadata(for: title) {
+                    sources[MetadataProviderKind.theGamesDB.rawValue] = metadata
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
+        if sources.isEmpty, let lastError {
+            throw lastError
+        }
+        return sources
+    }
+
+    private nonisolated static func metadata(
+        for title: String,
+        theGamesDBAPIKey: String?,
+        screenScraperCredentials: ScreenScraperCredentials?
+    ) async throws -> GameMetadata? {
+        let sources = try await metadataSources(
+            for: title,
+            theGamesDBAPIKey: theGamesDBAPIKey,
+            screenScraperCredentials: screenScraperCredentials
+        )
+        return combinedMetadata(from: sources)
+    }
+
+    private nonisolated static func needsMetadataRefresh(
+        _ entry: GameMetadataCacheEntry?,
+        hasTheGamesDB: Bool,
+        hasScreenScraper: Bool
+    ) -> Bool {
+        guard let entry else { return true }
+        guard entry.state == .success else {
+            return true
+        }
+
+        let sourceMetadata = entry.availableSourceMetadata
+        if hasTheGamesDB, sourceMetadata[MetadataProviderKind.theGamesDB.rawValue] == nil {
+            return true
+        }
+        if hasScreenScraper, sourceMetadata[MetadataProviderKind.screenScraper.rawValue] == nil {
+            return true
+        }
+
+        guard let metadata = combinedMetadata(from: sourceMetadata) ?? entry.metadata else {
+            return true
+        }
+        return metadata.isMissingRichArtworkOrDetails
+    }
+
+    private nonisolated static func matches(
+        for query: String,
+        theGamesDBAPIKey: String?,
+        screenScraperCredentials: ScreenScraperCredentials?
+    ) async throws -> [GameMetadataMatch] {
+        var matches: [GameMetadataMatch] = []
+        var lastError: Error?
+
+        if let screenScraperCredentials, screenScraperCredentials.isComplete {
+            do {
+                matches.append(contentsOf: try await ScreenScraperMetadataProvider(credentials: screenScraperCredentials).matches(for: query))
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty {
+            do {
+                matches.append(contentsOf: try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).matches(for: query))
+            } catch {
+                lastError = error
+            }
+        }
+
+        if matches.isEmpty, let lastError {
+            throw lastError
+        }
+
+        var seen = Set<String>()
+        return matches.filter { match in
+            let key = "\(match.provider):\(match.providerID)"
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private nonisolated static func metadata(
+        for match: GameMetadataMatch,
+        theGamesDBAPIKey: String?,
+        screenScraperCredentials: ScreenScraperCredentials?
+    ) async throws -> GameMetadata {
+        switch match.provider {
+        case "ScreenScraper":
+            guard let screenScraperCredentials, screenScraperCredentials.isComplete else {
+                throw MetadataLookupError.missingAPIKey
+            }
+            return try await ScreenScraperMetadataProvider(credentials: screenScraperCredentials).metadata(for: match)
+        default:
+            guard let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty else {
+                throw MetadataLookupError.missingAPIKey
+            }
+            return try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).metadata(for: match)
+        }
+    }
+
     private nonisolated static func loadMetadataCache() -> [String: GameMetadataCacheEntry] {
         guard let data = try? Data(contentsOf: metadataCacheURL) else { return [:] }
         if let cache = try? JSONDecoder().decode([String: GameMetadataCacheEntry].self, from: data) {
             return cache.filter { _, entry in
-                entry.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+                if entry.provider == "TheGamesDB" {
+                    return entry.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+                }
+                return entry.provider == "ScreenScraper" || entry.provider == "Metadata"
             }
         }
 
@@ -1305,43 +1806,52 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     private nonisolated static func loadTheGamesDBAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: gamesDBKeychainService,
-            kSecAttrAccount as String: gamesDBKeychainAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let key = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-
-        return key
+        loadMetadataProviderCredentials().theGamesDBAPIKey
     }
 
     private nonisolated static func saveTheGamesDBAPIKey(_ key: String?) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: gamesDBKeychainService,
-            kSecAttrAccount as String: gamesDBKeychainAccount
-        ]
+        var credentials = loadMetadataProviderCredentials()
+        credentials.theGamesDBAPIKey = key
+        saveMetadataProviderCredentials(credentials)
+    }
 
-        SecItemDelete(query as CFDictionary)
+    private nonisolated static func loadScreenScraperCredentials() -> ScreenScraperCredentials? {
+        let credentials = loadMetadataProviderCredentials().screenScraperCredentials
+        return credentials?.isComplete == true ? credentials : nil
+    }
 
-        guard let key, !key.isEmpty, let data = key.data(using: .utf8) else { return }
+    private nonisolated static func saveScreenScraperCredentials(_ credentials: ScreenScraperCredentials?) {
+        var storedCredentials = loadMetadataProviderCredentials()
+        storedCredentials.screenScraperCredentials = credentials
+        saveMetadataProviderCredentials(storedCredentials)
+    }
 
-        let item: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: gamesDBKeychainService,
-            kSecAttrAccount as String: gamesDBKeychainAccount,
-            kSecValueData as String: data
-        ]
-        SecItemAdd(item as CFDictionary, nil)
+    private nonisolated static func loadMetadataProviderCredentials() -> MetadataProviderCredentials {
+        guard let data = try? Data(contentsOf: metadataProviderCredentialsURL),
+              let credentials = try? JSONDecoder().decode(MetadataProviderCredentials.self, from: data)
+        else {
+            return MetadataProviderCredentials(theGamesDBAPIKey: nil, screenScraperCredentials: nil)
+        }
+        return credentials
+    }
+
+    private nonisolated static func saveMetadataProviderCredentials(_ credentials: MetadataProviderCredentials) {
+        let url = metadataProviderCredentialsURL
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(credentials)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            // Credential persistence should not block normal app use.
+        }
+    }
+
+    private nonisolated static var metadataProviderCredentialsURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("SwitchLoader", isDirectory: true)
+            .appendingPathComponent("MetadataProviders.json")
     }
 
     private nonisolated static let defaultHomebrewCatalog: [HomebrewCatalogEntry] = [
@@ -1697,6 +2207,571 @@ private struct GitHubReleaseAsset: Decodable, Sendable {
     }
 }
 
+private struct ScreenScraperMetadataProvider: Sendable {
+    let credentials: ScreenScraperCredentials
+    private static let nintendoSwitchSystemIDCacheKey = "SwitchLoader.ScreenScraper.NintendoSwitchSystemID"
+
+    func metadata(for title: String) async throws -> GameMetadata? {
+        guard let game = try await findGames(named: title).max(by: { score($0.name, against: title) < score($1.name, against: title) })
+        else {
+            return nil
+        }
+        return game.metadata
+    }
+
+    func matches(for title: String) async throws -> [GameMetadataMatch] {
+        try await findGames(named: title).map(\.match)
+    }
+
+    func testConnection() async throws -> String {
+        do {
+            _ = try await jsonObject(endpoint: "ssinfraInfos.php", queryItems: appQuery())
+        } catch {
+            throw MetadataLookupError.providerRejected("ScreenScraper app credentials failed before member login. Check Advanced app credentials: Dev username, Debug password, and Software name.\n\n\(error.localizedDescription)")
+        }
+
+        let object = try await jsonObject(endpoint: "ssuserInfos.php", queryItems: baseQuery())
+        let response = object["response"] as? [String: Any]
+        let user = response?["ssuser"] as? [String: Any]
+            ?? object["ssuser"] as? [String: Any]
+            ?? response
+            ?? object
+
+        let name = Self.stringValue(from: user["id"] ?? user["pseudo"] ?? user["username"])
+            ?? credentials.memberUsername
+        let requestsToday = Self.stringValue(from: user["requeststoday"] ?? user["requestcount"])
+        let maxRequests = Self.stringValue(from: user["maxrequestsperday"])
+        let threads = Self.stringValue(from: user["maxthreads"])
+
+        var details = ["Connected to ScreenScraper as \(name)."]
+        if let requestsToday, let maxRequests {
+            details.append("Requests today: \(requestsToday) / \(maxRequests).")
+        }
+        if let threads {
+            details.append("Allowed threads: \(threads).")
+        }
+        return details.joined(separator: "\n")
+    }
+
+    func metadata(for match: GameMetadataMatch) async throws -> GameMetadata {
+        let parts = match.providerID.split(separator: ":").compactMap { Int($0) }
+        if parts.count == 2, let game = try await loadGameInfo(gameID: parts[0], systemID: parts[1]) {
+            return game.metadata
+        }
+
+        return GameMetadata(
+            provider: "ScreenScraper",
+            providerID: match.providerID,
+            matchedTitle: match.title,
+            summary: match.summary,
+            releaseDate: match.releaseDate,
+            platformName: match.platformName,
+            rating: match.rating,
+            players: match.players,
+            coop: match.coop,
+            youtubeURL: match.youtubeURL,
+            aliases: match.aliases,
+            genres: match.genres,
+            developers: match.developers,
+            publishers: match.publishers,
+            bannerImageURL: nil,
+            artworkImageURL: nil,
+            coverImageURL: nil,
+            logoImageURL: nil,
+            screenshotImageURLs: []
+        )
+    }
+
+    private func findGames(named title: String) async throws -> [RemoteGame] {
+        var combined: [RemoteGame] = []
+        let systemID = try? await nintendoSwitchSystemID()
+        var lastError: Error?
+        for searchTerm in Self.searchTerms(for: title) {
+            var query = baseQuery()
+            query.append(URLQueryItem(name: "recherche", value: searchTerm))
+            if let systemID {
+                query.append(URLQueryItem(name: "systemeid", value: String(systemID)))
+            }
+
+            do {
+                let object = try await jsonObject(endpoint: "jeuRecherche.php", queryItems: query, timeout: 40)
+                combined.append(contentsOf: Self.games(from: object))
+                if !combined.isEmpty { break }
+            } catch {
+                lastError = error
+            }
+        }
+
+        let games = Self.deduplicatedGames(combined)
+        if games.isEmpty, let lastError {
+            throw lastError
+        }
+        if systemID == nil {
+            let filtered = games.filter(\.isNintendoSwitchRelease)
+            return filtered.isEmpty ? games.sorted { score($0.name, against: title) > score($1.name, against: title) } : filtered
+        }
+        return games.sorted { score($0.name, against: title) > score($1.name, against: title) }
+    }
+
+    private func loadGameInfo(gameID: Int, systemID: Int) async throws -> RemoteGame? {
+        var query = baseQuery()
+        query.append(URLQueryItem(name: "gameid", value: String(gameID)))
+        query.append(URLQueryItem(name: "systemeid", value: String(systemID)))
+        query.append(URLQueryItem(name: "romtype", value: "rom"))
+        query.append(URLQueryItem(name: "romnom", value: "SwitchLoader"))
+        query.append(URLQueryItem(name: "romtaille", value: "1"))
+
+        let object = try await jsonObject(endpoint: "jeuInfos.php", queryItems: query)
+        return Self.games(from: object).first
+    }
+
+    private func nintendoSwitchSystemID() async throws -> Int? {
+        let cachedID = UserDefaults.standard.integer(forKey: Self.nintendoSwitchSystemIDCacheKey)
+        if cachedID > 0 {
+            return cachedID
+        }
+
+        let object = try await jsonObject(endpoint: "systemesListe.php", queryItems: baseQuery())
+        let systems = Self.array(named: "systemes", or: "systeme", in: object)
+        let systemID = systems.compactMap(RemoteSystem.init(dictionary:)).first { system in
+            let names = system.names.joined(separator: " ")
+            return names.localizedCaseInsensitiveContains("switch")
+                && !names.localizedCaseInsensitiveContains("switch 2")
+        }?.id
+        if let systemID {
+            UserDefaults.standard.set(systemID, forKey: Self.nintendoSwitchSystemIDCacheKey)
+        }
+        return systemID
+    }
+
+    private func baseQuery() -> [URLQueryItem] {
+        appQuery() + [
+            URLQueryItem(name: "ssid", value: credentials.memberUsername),
+            URLQueryItem(name: "sspassword", value: credentials.memberPassword)
+        ]
+    }
+
+    private func appQuery() -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "devid", value: credentials.devUsername),
+            URLQueryItem(name: "devpassword", value: credentials.debugPassword),
+            URLQueryItem(name: "softname", value: credentials.softwareName),
+            URLQueryItem(name: "output", value: "json")
+        ]
+    }
+
+    private func jsonObject(endpoint: String, queryItems: [URLQueryItem], timeout: TimeInterval = 25) async throws -> [String: Any] {
+        guard var components = URLComponents(string: "https://api.screenscraper.fr/api2/\(endpoint)") else {
+            throw URLError(.badURL)
+        }
+        components.queryItems = queryItems
+        guard let url = components.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            throw MetadataLookupError.providerTimedOut("ScreenScraper")
+        }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let message = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw MetadataLookupError.providerRejected(Self.screenScraperErrorMessage(statusCode: http.statusCode, message: message))
+        }
+
+        let object = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if let message = Self.errorMessage(in: object) {
+            throw MetadataLookupError.providerRejected("ScreenScraper rejected the request: \(message)")
+        }
+        return object
+    }
+
+    private static func searchTerms(for title: String) -> [String] {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var terms = [trimmed]
+        let romanToNumber: [(String, String)] = [
+            (" VIII", " 8"),
+            (" VII", " 7"),
+            (" VI", " 6"),
+            (" IV", " 4"),
+            (" IX", " 9"),
+            (" V", " 5"),
+            (" III", " 3"),
+            (" II", " 2")
+        ]
+        for (roman, number) in romanToNumber {
+            if trimmed.range(of: roman, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+                terms.append(trimmed.replacingOccurrences(of: roman, with: number, options: [.caseInsensitive, .diacriticInsensitive]))
+            }
+        }
+
+        return terms.reduce(into: []) { result, term in
+            if !result.contains(where: { $0.localizedCaseInsensitiveCompare(term) == .orderedSame }) {
+                result.append(term)
+            }
+        }
+    }
+
+    private static func deduplicatedGames(_ games: [RemoteGame]) -> [RemoteGame] {
+        var seen = Set<String>()
+        return games.filter { game in
+            let key = game.providerID
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private func score(_ candidate: String, against title: String) -> Double {
+        let lhs = normalized(candidate)
+        let rhs = normalized(title)
+        if lhs == rhs { return 1 }
+        if lhs.contains(rhs) || rhs.contains(lhs) { return 0.85 }
+        let lhsTokens = Set(lhs.split(separator: " "))
+        let rhsTokens = Set(rhs.split(separator: " "))
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        let shared = lhsTokens.intersection(rhsTokens).count
+        return Double(shared) / Double(max(lhsTokens.count, rhsTokens.count))
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .replacingOccurrences(of: #"[^a-zA-Z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private static func games(from object: [String: Any]) -> [RemoteGame] {
+        if let response = object["response"] as? [String: Any] {
+            let games = array(named: "jeux", or: "jeu", in: response).compactMap(RemoteGame.init(dictionary:))
+            if !games.isEmpty { return games }
+            if let game = response["jeu"] as? [String: Any], let remote = RemoteGame(dictionary: game) {
+                return [remote]
+            }
+        }
+
+        let games = array(named: "jeux", or: "jeu", in: object).compactMap(RemoteGame.init(dictionary:))
+        if !games.isEmpty { return games }
+        if let game = object["jeu"] as? [String: Any], let remote = RemoteGame(dictionary: game) {
+            return [remote]
+        }
+        return []
+    }
+
+    private static func errorMessage(in object: [String: Any]) -> String? {
+        let candidates: [Any?] = [
+            object["erreur"],
+            object["error"],
+            object["message"],
+            (object["response"] as? [String: Any])?["erreur"],
+            (object["response"] as? [String: Any])?["error"],
+            (object["response"] as? [String: Any])?["message"],
+            (object["header"] as? [String: Any])?["erreur"],
+            (object["header"] as? [String: Any])?["error"],
+            (object["header"] as? [String: Any])?["message"]
+        ]
+
+        return candidates.compactMap { value in
+            if let string = stringValue(from: value) { return string }
+            if let dictionary = value as? [String: Any] {
+                return dictionary.values.compactMap { stringValue(from: $0) }.first { !$0.isEmpty }
+            }
+            return nil
+        }.first
+    }
+
+    private static func screenScraperErrorMessage(statusCode: Int, message: String?) -> String {
+        let raw = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let explanation: String
+        if raw.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .localizedCaseInsensitiveContains("identifiants utilisateurs") {
+            explanation = "ScreenScraper accepted the app/debug side, but rejected the member username/password. Try the Password shown on your ScreenScraper account/API page for the member password field. Do not use the Debug Password there."
+        } else if raw.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .localizedCaseInsensitiveContains("identifiants developpeur") {
+            explanation = "ScreenScraper rejected the Advanced app credentials. Check Dev username, Debug password, and Software name."
+        } else {
+            explanation = "ScreenScraper rejected the request."
+        }
+
+        return "\(explanation)\n\nHTTP \(statusCode)\(raw.isEmpty ? "" : ": \(raw)")"
+    }
+
+    private static func stringValue(from value: Any?) -> String? {
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return nil
+    }
+
+    private static func array(named plural: String, or singular: String, in dictionary: [String: Any]) -> [[String: Any]] {
+        if let array = dictionary[plural] as? [[String: Any]] {
+            return array
+        }
+        if let wrapper = dictionary[plural] as? [String: Any] {
+            if let array = wrapper[singular] as? [[String: Any]] {
+                return array
+            }
+            if let item = wrapper[singular] as? [String: Any] {
+                return [item]
+            }
+        }
+        if let array = dictionary[singular] as? [[String: Any]] {
+            return array
+        }
+        if let item = dictionary[singular] as? [String: Any] {
+            return [item]
+        }
+        return []
+    }
+
+    private struct RemoteSystem {
+        let id: Int
+        let names: [String]
+
+        init?(dictionary: [String: Any]) {
+            guard let id = Self.intValue(from: dictionary["id"]) else { return nil }
+            self.id = id
+            self.names = Self.strings(from: dictionary["noms"]) + Self.strings(from: dictionary["nom"]) + Self.strings(from: dictionary["name"])
+        }
+
+        private static func intValue(from value: Any?) -> Int? {
+            if let int = value as? Int { return int }
+            if let string = value as? String { return Int(string) }
+            if let number = value as? NSNumber { return number.intValue }
+            return nil
+        }
+
+        private static func strings(from value: Any?) -> [String] {
+            if let string = value as? String, !string.isEmpty { return [string] }
+            if let dictionary = value as? [String: Any] {
+                return dictionary.values.compactMap { $0 as? String }.filter { !$0.isEmpty }
+            }
+            return []
+        }
+    }
+
+    private struct RemoteGame {
+        let id: Int
+        let systemID: Int?
+        let name: String
+        let summary: String?
+        let releaseDate: String?
+        let rating: String?
+        let players: String?
+        let youtubeURL: URL?
+        let genres: [String]
+        let developers: [String]
+        let publishers: [String]
+        let aliases: [String]
+        let platformName: String?
+        let mediaURLs: [String: [URL]]
+
+        var match: GameMetadataMatch {
+            GameMetadataMatch(
+                provider: "ScreenScraper",
+                providerID: providerID,
+                title: name,
+                summary: summary,
+                releaseDate: releaseDate,
+                platformName: platformName,
+                rating: rating,
+                players: players,
+                coop: nil,
+                youtubeURL: youtubeURL,
+                aliases: aliases,
+                genres: genres,
+                developers: developers,
+                publishers: publishers
+            )
+        }
+
+        var metadata: GameMetadata {
+            GameMetadata(
+                provider: "ScreenScraper",
+                providerID: providerID,
+                matchedTitle: name,
+                summary: summary,
+                releaseDate: releaseDate,
+                platformName: platformName ?? "Nintendo Switch",
+                rating: rating,
+                players: players,
+                coop: nil,
+                youtubeURL: youtubeURL,
+                aliases: aliases,
+                genres: genres,
+                developers: developers,
+                publishers: publishers,
+                bannerImageURL: preferredURL(types: ["banner", "steamgrid", "wheel", "wheelhd", "marquee", "fanart", "background"]),
+                artworkImageURL: preferredURL(types: ["fanart", "background", "steamgrid", "screenshot", "ss", "bezel"]),
+                coverImageURL: preferredURL(types: ["box2d", "box3d", "cover", "boxfront", "steamcard"]),
+                logoImageURL: preferredURL(types: ["clearart", "clearlogo", "wheelhd", "wheel", "logo", "marquee", "title"]),
+                screenshotImageURLs: urls(types: ["screenshot", "ss", "fanart", "background", "steamgrid"])
+            )
+        }
+
+        var providerID: String {
+            if let systemID {
+                return "\(id):\(systemID)"
+            }
+            return "\(id)"
+        }
+
+        var isNintendoSwitchRelease: Bool {
+            platformName?.localizedCaseInsensitiveContains("switch") == true
+        }
+
+        init?(dictionary: [String: Any]) {
+            guard let id = Self.intValue(from: dictionary["id"] ?? dictionary["gameid"] ?? dictionary["jeu_id"]),
+                  let name = Self.localizedText(from: dictionary["noms"])
+                    ?? Self.stringValue(from: dictionary["nom"])
+                    ?? Self.stringValue(from: dictionary["name"])
+                    ?? Self.stringValue(from: dictionary["titre"])
+            else {
+                return nil
+            }
+
+            self.id = id
+            let system = dictionary["systeme"] as? [String: Any]
+            self.systemID = Self.intValue(from: system?["id"] ?? dictionary["systemeid"] ?? dictionary["systeme_id"])
+            self.name = name
+            self.summary = Self.localizedText(from: dictionary["synopsis"] ?? dictionary["synopsys"] ?? dictionary["overview"])
+            self.releaseDate = Self.stringValue(from: dictionary["dates"] ?? dictionary["date"] ?? dictionary["releasedate"])
+            self.rating = Self.localizedText(from: dictionary["classification"] ?? dictionary["classifications"] ?? dictionary["rating"])
+            self.players = Self.stringValue(from: dictionary["joueurs"] ?? dictionary["nbjoueurs"] ?? dictionary["players"])
+            self.youtubeURL = Self.youtubeURL(from: dictionary["youtube"] ?? dictionary["video"] ?? dictionary["trailer"])
+            self.genres = Self.localizedList(from: dictionary["genres"] ?? dictionary["genre"])
+            self.developers = Self.localizedList(from: dictionary["developpeur"] ?? dictionary["developer"] ?? dictionary["developpeurs"])
+            self.publishers = Self.localizedList(from: dictionary["editeur"] ?? dictionary["publisher"] ?? dictionary["editeurs"])
+            self.aliases = Self.localizedList(from: dictionary["noms"]) .filter { $0 != name }
+            self.platformName = Self.localizedText(from: system?["noms"]) ?? Self.stringValue(from: system?["nom"]) ?? Self.stringValue(from: dictionary["systeme"])
+            self.mediaURLs = Self.mediaURLs(from: dictionary["medias"] ?? dictionary["media"])
+        }
+
+        private func preferredURL(types: [String]) -> URL? {
+            urls(types: types).first
+        }
+
+        private func urls(types: [String]) -> [URL] {
+            var seen = Set<URL>()
+            return types.flatMap { type in
+                mediaURLs[Self.normalizedMediaType(type)] ?? []
+            }.filter { url in
+                guard !seen.contains(url) else { return false }
+                seen.insert(url)
+                return true
+            }
+        }
+
+        private static func mediaURLs(from value: Any?) -> [String: [URL]] {
+            let dictionaries: [[String: Any]]
+            if let array = value as? [[String: Any]] {
+                dictionaries = array
+            } else if let dictionary = value as? [String: Any],
+                      let array = dictionary["media"] as? [[String: Any]] {
+                dictionaries = array
+            } else if let dictionary = value as? [String: Any] {
+                dictionaries = dictionary.values.compactMap { $0 as? [String: Any] }
+            } else {
+                dictionaries = []
+            }
+
+            var result: [String: [URL]] = [:]
+            for dictionary in dictionaries {
+                guard let type = stringValue(from: dictionary["type"] ?? dictionary["nomcourt"] ?? dictionary["media"]) else { continue }
+                let url = urlValue(from: dictionary["url"] ?? dictionary["url_media"] ?? dictionary["media"] ?? dictionary["link"])
+                if let url {
+                    result[normalizedMediaType(type), default: []].append(url)
+                }
+            }
+            return result
+        }
+
+        private static func normalizedMediaType(_ value: String) -> String {
+            value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+                .replacingOccurrences(of: #"[^a-zA-Z0-9]+"#, with: "", options: .regularExpression)
+                .lowercased()
+        }
+
+        private static func localizedText(from value: Any?) -> String? {
+            if let string = stringValue(from: value), !string.isEmpty {
+                return string
+            }
+            if let dictionary = value as? [String: Any] {
+                for key in ["text", "nom_en", "synopsis_en", "value", "en", "us", "wor", "ss", "nom", "name"] {
+                    if let text = stringValue(from: dictionary[key]), !text.isEmpty {
+                        return text
+                    }
+                }
+                return dictionary.values.compactMap { stringValue(from: $0) }.first { !$0.isEmpty }
+            }
+            if let array = value as? [[String: Any]] {
+                let preferred = array.first { dictionary in
+                    let region = stringValue(from: dictionary["region"] ?? dictionary["langue"] ?? dictionary["lang"]) ?? ""
+                    return ["en", "us", "uk", "wor", "ss"].contains { region.localizedCaseInsensitiveContains($0) }
+                }
+                return localizedText(from: preferred ?? array.first)
+            }
+            return nil
+        }
+
+        private static func localizedList(from value: Any?) -> [String] {
+            if let text = localizedText(from: value) {
+                return [text]
+            }
+            if let array = value as? [[String: Any]] {
+                return array.compactMap { localizedText(from: $0) }
+            }
+            if let array = value as? [Any] {
+                return array.compactMap { localizedText(from: $0) }
+            }
+            return []
+        }
+
+        private static func stringValue(from value: Any?) -> String? {
+            if let string = value as? String {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            if let number = value as? NSNumber {
+                return number.stringValue
+            }
+            return nil
+        }
+
+        private static func intValue(from value: Any?) -> Int? {
+            if let int = value as? Int { return int }
+            if let string = stringValue(from: value) { return Int(string) }
+            if let number = value as? NSNumber { return number.intValue }
+            return nil
+        }
+
+        private static func urlValue(from value: Any?) -> URL? {
+            guard let string = stringValue(from: value) else { return nil }
+            return URL(string: string)
+        }
+
+        private static func youtubeURL(from value: Any?) -> URL? {
+            guard let string = stringValue(from: value) else { return nil }
+            if string.localizedCaseInsensitiveContains("youtube"),
+               let url = URL(string: string) {
+                return url
+            }
+            return URL(string: "https://www.youtube.com/watch?v=\(string)")
+        }
+    }
+}
+
 private struct TheGamesDBMetadataProvider: Sendable {
     static let nintendoSwitchPlatformID = 4971
 
@@ -1709,6 +2784,14 @@ private struct TheGamesDBMetadataProvider: Sendable {
 
     func matches(for title: String) async throws -> [GameMetadataMatch] {
         try await findGames(named: title).map(\.match)
+    }
+
+    func testConnection() async throws -> String {
+        let matches = try await matches(for: "Mario Kart 8 Deluxe")
+        if matches.isEmpty {
+            return "Connected to TheGamesDB, but the test lookup returned no Nintendo Switch matches."
+        }
+        return "Connected to TheGamesDB.\nTest lookup found \(matches.count) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
     }
 
     func metadata(for match: GameMetadataMatch) async throws -> GameMetadata {
@@ -1806,7 +2889,9 @@ private struct TheGamesDBMetadataProvider: Sendable {
         request.timeoutInterval = 20
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw URLError(.badServerResponse)
+            let message = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw MetadataLookupError.providerRejected("TheGamesDB returned HTTP \(http.statusCode)\(message?.isEmpty == false ? ": \(message!)" : ".")")
         }
         return (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     }

@@ -44,8 +44,21 @@
 - SwitchLoader Receiver native `.nro` for installing generated Homebrew folders over USB into SD card homebrew paths.
 - Homebrew tab **Install to Switch** action for sending generated folders to SwitchLoader Receiver.
 - Launch splash screen for the macOS app with animated SwitchLoader handheld artwork.
+- Netflix-style Library featured panel with fixed-size fanart/backdrop artwork, larger usable detail space, cover art, media strip, local file summaries, and scrollable content for games with many files or DLC.
+- Quick Library game picker next to the tab selector for jumping directly to a game without stepping through the carousel one by one.
+- Library file rows now show per-file sizes.
+- Library metadata progress bar and status text while provider lookups are running.
+- ScreenScraper metadata provider support alongside TheGamesDB, including richer artwork fields such as fanart/backdrops, clear/logo artwork, banners, screenshots, summaries, genres, developers, publishers, and trailer links.
+- Separate TGDB and ScreenScraper manual matching flows, with red X/green tick provider pills showing whether each source has a saved match.
+- Metadata cache now stores provider matches separately and combines the best available fields from TGDB and ScreenScraper for display.
+- Automatic library refresh now checks for missing artwork/details and fetches incomplete provider metadata where possible.
+- ScreenScraper searches now cache the Nintendo Switch system id, try numeric fallbacks for roman numeral titles, and report friendlier timeout messages.
+- Embedded YouTube trailer popup for games with trailer metadata.
+- Metadata provider credentials moved out of macOS Keychain and into a local SwitchLoader settings file under Application Support to avoid repeated Keychain password prompts.
+- Metadata settings now include provider test buttons with modal success/error results.
 
 ### Tests
 
 - RCM payload layout and oversized payload coverage in `SwitchLoaderCoreTests`.
 - Hekate-sized payload chunk count coverage for the reference RCM wrapper layout.
+- Full Swift package and Xcode app builds verified after the Library, metadata, trailer, and credential-storage updates.

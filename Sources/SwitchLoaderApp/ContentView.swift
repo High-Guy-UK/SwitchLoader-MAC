@@ -3,13 +3,30 @@ import AppKit
 import SwitchLoaderCore
 import UniformTypeIdentifiers
 
+private struct ManualMetadataMatchRequest: Identifiable {
+    let game: LibraryGame
+    let provider: MetadataProviderKind
+
+    var id: String {
+        "\(game.id)-\(provider.rawValue)"
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var model: SwitchLoaderModel
     @State private var selectedTab = AppTab.workflow
+    @State private var selectedLibraryIndex = 0
     @State private var selectedLibraryGame: LibraryGame?
-    @State private var manualMatchGame: LibraryGame?
+    @State private var manualMatchRequest: ManualMetadataMatchRequest?
     @State private var isShowingMetadataSettings = false
     @State private var metadataAPIKey = ""
+    @State private var screenScraperCredentials = ScreenScraperCredentials(
+        devUsername: "",
+        debugPassword: "",
+        softwareName: "SwitchLoader",
+        memberUsername: "",
+        memberPassword: ""
+    )
     @State private var isShowingCustomHomebrewSheet = false
     @State private var customHomebrewURL = ""
     @State private var customHomebrewError = ""
@@ -58,19 +75,24 @@ struct ContentView: View {
             .environmentObject(model)
             .frame(minWidth: 960, minHeight: 720)
         }
-        .sheet(item: $manualMatchGame) { game in
-            ManualMetadataMatchSheet(game: game)
+        .sheet(item: $manualMatchRequest) { request in
+            ManualMetadataMatchSheet(game: request.game, provider: request.provider)
                 .environmentObject(model)
                 .frame(minWidth: 720, minHeight: 560)
         }
         .sheet(isPresented: $isShowingMetadataSettings) {
-            MetadataSettingsSheet(apiKey: $metadataAPIKey) {
+            MetadataSettingsSheet(
+                apiKey: $metadataAPIKey,
+                screenScraperCredentials: $screenScraperCredentials
+            ) {
                 model.saveTheGamesDBAPIKey(metadataAPIKey)
+                model.saveScreenScraperCredentials(screenScraperCredentials)
                 isShowingMetadataSettings = false
             } onCancel: {
                 isShowingMetadataSettings = false
             }
-            .frame(width: 460)
+            .environmentObject(model)
+            .frame(width: 520)
         }
         .sheet(isPresented: $isShowingCustomHomebrewSheet) {
             CustomHomebrewSheet(
@@ -119,11 +141,38 @@ struct ContentView: View {
             .frame(width: 470)
             .labelsHidden()
 
+            if selectedTab == .library, !model.libraryGames.isEmpty {
+                libraryJumpPicker
+            }
+
             Spacer()
             StatusBadge(status: model.status)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private var libraryJumpPicker: some View {
+        Picker("Jump to game", selection: Binding(
+            get: {
+                min(selectedLibraryIndex, max(model.libraryGames.count - 1, 0))
+            },
+            set: { newValue in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    selectedLibraryIndex = newValue
+                }
+            }
+        )) {
+            ForEach(Array(model.libraryGames.enumerated()), id: \.element.id) { index, game in
+                Text(game.metadata?.matchedTitle ?? game.title)
+                    .lineLimit(1)
+                    .tag(index)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 280)
+        .labelsHidden()
+        .help("Jump to a game in the library")
     }
 
     private var workflow: some View {
@@ -303,10 +352,11 @@ struct ContentView: View {
                 .disabled(model.libraryDirectory == nil || model.isScanningLibrary)
 
                 Button {
-                    metadataAPIKey = ""
+                    metadataAPIKey = model.loadTheGamesDBAPIKeyForEditing()
+                    screenScraperCredentials = model.loadScreenScraperSettingsForEditing()
                     isShowingMetadataSettings = true
                 } label: {
-                    Label(model.hasTheGamesDBAPIKey ? "TGDB Connected" : "TGDB Key", systemImage: "photo.on.rectangle.angled")
+                    Label(model.hasAnyMetadataProvider ? "Metadata Connected" : "Metadata", systemImage: "photo.on.rectangle.angled")
                         .frame(maxWidth: .infinity)
                 }
 
@@ -316,7 +366,29 @@ struct ContentView: View {
                     Label(model.isFetchingMetadata ? "Fetching New Art" : "Fetch New Art", systemImage: "sparkles")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(!model.hasTheGamesDBAPIKey || model.libraryGames.isEmpty || model.isFetchingMetadata)
+                .disabled(!model.hasAnyMetadataProvider || model.libraryGames.isEmpty || model.isFetchingMetadata)
+
+                if model.isFetchingMetadata {
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 8) {
+                            ProgressView(value: model.metadataProgress)
+                                .controlSize(.small)
+                            Text("\(Int((model.metadataProgress * 100).rounded()))%")
+                                .font(.caption2.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, alignment: .trailing)
+                        }
+
+                        Text(model.metadataStatusDetail.isEmpty ? model.metadataMessage : model.metadataStatusDetail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(10)
+                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                }
 
                 Button {
                     model.addLibraryToQueue()
@@ -357,40 +429,57 @@ struct ContentView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("Games")
-                        .font(.headline)
-                    Spacer()
-                    Text("\(model.libraryGames.count)")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                .padding(14)
-
                 if model.libraryGames.isEmpty {
                     ContentUnavailableView("No Games", systemImage: "books.vertical")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    HorizontalWheelScrollView {
-                        HStack(alignment: .top, spacing: 16) {
-                            ForEach(model.libraryGames) { game in
-                                LibraryGamePoster(game: game) {
-                                    selectedLibraryGame = game
-                                } addAll: {
-                                    model.addGameToQueue(game)
-                                    selectedTab = .workflow
-                                } manualMatch: {
-                                    manualMatchGame = game
-                                }
-                            }
+                    let index = min(selectedLibraryIndex, model.libraryGames.count - 1)
+                    let game = model.libraryGames[index]
+
+                    LibraryFeaturedGamePanel(
+                        game: game,
+                        index: index,
+                        count: model.libraryGames.count,
+                        previous: { showPreviousLibraryGame() },
+                        next: { showNextLibraryGame() },
+                        open: { selectedLibraryGame = game },
+                        addAll: {
+                            model.addGameToQueue(game)
+                            selectedTab = .workflow
+                        },
+                        addMain: { model.addGameToQueue(game, contentType: .mainGame) },
+                        addUpdates: { model.addGameToQueue(game, contentType: .update) },
+                        addDLC: { model.addGameToQueue(game, contentType: .dlc) },
+                        manualMatch: { provider in
+                            manualMatchRequest = ManualMetadataMatchRequest(game: game, provider: provider)
                         }
-                        .padding(.horizontal, 18)
-                        .padding(.top, 14)
-                        .padding(.bottom, 22)
-                    }
+                    )
+                    .id(game.id)
+                    .transition(.opacity)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onChange(of: model.libraryGames.count) { _, count in
+                        if count == 0 {
+                            selectedLibraryIndex = 0
+                        } else if selectedLibraryIndex >= count {
+                            selectedLibraryIndex = count - 1
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private func showPreviousLibraryGame() {
+        guard !model.libraryGames.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            selectedLibraryIndex = (selectedLibraryIndex - 1 + model.libraryGames.count) % model.libraryGames.count
+        }
+    }
+
+    private func showNextLibraryGame() {
+        guard !model.libraryGames.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            selectedLibraryIndex = (selectedLibraryIndex + 1) % model.libraryGames.count
         }
     }
 
@@ -833,6 +922,777 @@ private struct LibraryTypePill: View {
     }
 }
 
+private struct LibraryFeaturedGamePanel: View {
+    let game: LibraryGame
+    let index: Int
+    let count: Int
+    let previous: () -> Void
+    let next: () -> Void
+    let open: () -> Void
+    let addAll: () -> Void
+    let addMain: () -> Void
+    let addUpdates: () -> Void
+    let addDLC: () -> Void
+    let manualMatch: (MetadataProviderKind) -> Void
+    @State private var activeTrailer: YouTubeTrailer?
+
+    private var displayTitle: String {
+        game.metadata?.matchedTitle ?? game.title
+    }
+
+    private var summary: String {
+        let text = game.metadata?.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? "No synopsis is cached yet. Fetch artwork/details or use Manual Match to fill in the library panel." : text
+    }
+
+    private var badgeValues: [String] {
+        let metadata = game.metadata
+        return [
+            metadata?.platformName ?? "Nintendo Switch",
+            metadata?.releaseDate,
+            metadata?.genres.prefix(2).joined(separator: ", "),
+            metadata?.rating
+        ].compactMap { value in
+            let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? nil : text
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+
+            ZStack(alignment: .topTrailing) {
+                backdrop(size: size)
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.64),
+                        .black.opacity(0.36),
+                        .black.opacity(0.16)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+
+                LinearGradient(
+                    colors: [.black.opacity(0.04), .black.opacity(0.18), .black.opacity(0.52)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                content(size: size)
+                    .frame(width: size.width, height: size.height, alignment: .leading)
+
+                navigation
+                    .padding(.top, 22)
+                    .padding(.horizontal, 24)
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+        }
+        .background(Color.black)
+        .contentShape(Rectangle())
+        .sheet(item: $activeTrailer) { trailer in
+            TrailerPlayerSheet(trailer: trailer)
+        }
+    }
+
+    private func content(size: CGSize) -> some View {
+        let isCompact = size.width < 960 || size.height < 700
+        let hasSideDetails = size.width >= 1160 && !isCompact
+        let posterWidth = isCompact ? 150.0 : 218.0
+
+        return ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: isCompact ? 14 : 18) {
+                HStack(alignment: .top, spacing: isCompact ? 18 : 26) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        poster
+                            .frame(width: posterWidth, height: posterWidth * 1.5)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.18))
+                            }
+                            .shadow(color: .black.opacity(0.48), radius: 24, y: 12)
+
+                        if !isCompact {
+                            localFileSummary
+                                .frame(width: posterWidth)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: isCompact ? 11 : 15) {
+                        titleArtwork
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack(alignment: .top, spacing: 14) {
+                            Text(displayTitle)
+                                .font(.system(size: isCompact ? 28 : 38, weight: .heavy, design: .rounded))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.58)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            HStack(spacing: 8) {
+                                trailerButton
+                                gamesDatabaseLink
+                            }
+                        }
+
+                        badgeRow
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .clipped()
+
+                        Text(summary)
+                            .font(isCompact ? .caption : .callout)
+                            .lineSpacing(4)
+                            .foregroundStyle(.white.opacity(0.86))
+                            .lineLimit(isCompact ? 4 : 7)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        typeRow
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .clipped()
+
+                        actionRow
+                            .padding(.top, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .clipped()
+
+                        detailGrid(columns: hasSideDetails ? 3 : 2)
+                            .padding(.top, isCompact ? 0 : 4)
+
+                        if isCompact {
+                            localPreview
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if hasSideDetails {
+                        VStack(alignment: .leading, spacing: 12) {
+                            creditsPanel
+                            localPreview
+                            trailerLink
+                        }
+                        .frame(width: 280, alignment: .topLeading)
+                    }
+                }
+
+                if !isCompact {
+                    mediaStrip
+                }
+            }
+            .padding(.top, isCompact ? 58 : 76)
+            .padding(.horizontal, isCompact ? 24 : 36)
+            .padding(.bottom, isCompact ? 20 : 28)
+            .frame(maxWidth: .infinity, minHeight: size.height, alignment: .topLeading)
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    private var navigation: some View {
+        HStack(spacing: 12) {
+            Text("\(index + 1) / \(count)")
+                .font(.caption.bold())
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.72))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(.black.opacity(0.34), in: Capsule())
+
+            HStack(spacing: 8) {
+                Button(action: previous) {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.white)
+                .background(.black.opacity(0.42), in: Circle())
+                .help("Previous game")
+
+                Button(action: next) {
+                    Image(systemName: "chevron.right")
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.white)
+                .background(.black.opacity(0.42), in: Circle())
+                .help("Next game")
+            }
+        }
+    }
+
+    private var badgeRow: some View {
+        HStack(spacing: 8) {
+            ForEach(badgeValues.prefix(4), id: \.self) { value in
+                Text(value)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.14), in: Capsule())
+                    .foregroundStyle(.white.opacity(0.88))
+            }
+        }
+    }
+
+    private var typeRow: some View {
+        HStack(spacing: 8) {
+            if !game.mainGames.isEmpty {
+                LibraryTypePill(type: .mainGame)
+            }
+            if !game.updates.isEmpty {
+                LibraryTypePill(type: .update)
+            }
+            if !game.dlcs.isEmpty {
+                LibraryTypePill(type: .dlc)
+            }
+            if !game.others.isEmpty {
+                LibraryTypePill(type: .other)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func backdrop(size: CGSize) -> some View {
+        if let url = game.heroImageURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                } else {
+                    fallbackBackdrop
+                        .frame(width: size.width, height: size.height)
+                }
+            }
+        } else {
+            fallbackBackdrop
+                .frame(width: size.width, height: size.height)
+        }
+    }
+
+    @ViewBuilder
+    private var poster: some View {
+        if let url = game.posterImageURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    fallbackPoster
+                }
+            }
+        } else {
+            fallbackPoster
+        }
+    }
+
+    private var fallbackBackdrop: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.05, green: 0.06, blue: 0.07),
+                    Color(red: 0.15, green: 0.18, blue: 0.20),
+                    Color(red: 0.03, green: 0.03, blue: 0.04)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "gamecontroller.fill")
+                .font(.system(size: 190))
+                .foregroundStyle(.white.opacity(0.05))
+                .offset(x: 280, y: -70)
+        }
+    }
+
+    private var fallbackPoster: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color.gray.opacity(0.36), Color.accentColor.opacity(0.34)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: "gamecontroller.fill")
+                .font(.system(size: 52))
+                .foregroundStyle(.white.opacity(0.20))
+            Text(game.title)
+                .font(.title3.bold())
+                .multilineTextAlignment(.center)
+                .lineLimit(5)
+                .padding(18)
+                .foregroundStyle(.white.opacity(0.88))
+        }
+    }
+
+    private var actionRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                primaryActions
+            }
+
+            HStack(spacing: 8) {
+                Button(action: addAll) {
+                    Image(systemName: "plus.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Add all files")
+
+                Button(action: open) {
+                    Image(systemName: "info.circle")
+                }
+                .help("Details")
+
+                sourceMatchButtons(compact: true)
+
+                addPartMenu
+                    .labelStyle(.iconOnly)
+                    .help("Add part")
+            }
+        }
+        .controlSize(.regular)
+    }
+
+    @ViewBuilder
+    private var primaryActions: some View {
+        Button(action: addAll) {
+            Label("Add All", systemImage: "plus.circle.fill")
+        }
+        .buttonStyle(.borderedProminent)
+
+        Button(action: open) {
+            Label("Details", systemImage: "info.circle")
+        }
+
+        sourceMatchButtons(compact: false)
+
+        addPartMenu
+    }
+
+    private func sourceMatchButtons(compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            ForEach(MetadataProviderKind.allCases) { provider in
+                sourceMatchButton(provider: provider, compact: compact)
+            }
+        }
+    }
+
+    private func sourceMatchButton(provider: MetadataProviderKind, compact: Bool) -> some View {
+        let isMatched = game.hasMetadata(from: provider)
+        return Button {
+            manualMatch(provider)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: isMatched ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .font(compact ? .caption : .body)
+                if !compact || provider == .theGamesDB {
+                    Text(provider.title)
+                        .lineLimit(1)
+                }
+            }
+            .font(compact ? .caption.bold() : .body.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, compact ? 8 : 11)
+            .padding(.vertical, compact ? 6 : 7)
+            .background((isMatched ? Color.green : Color.red).opacity(isMatched ? 0.48 : 0.56), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(.white.opacity(0.14))
+            }
+        }
+        .buttonStyle(.plain)
+        .help("\(isMatched ? "Fix" : "Set") \(provider.title) match")
+    }
+
+    private var addPartMenu: some View {
+        Menu {
+            Button("Main Game", action: addMain)
+                .disabled(game.mainGames.isEmpty)
+            Button("Updates", action: addUpdates)
+                .disabled(game.updates.isEmpty)
+            Button("DLC", action: addDLC)
+                .disabled(game.dlcs.isEmpty)
+        } label: {
+            Label("Add Part", systemImage: "list.bullet")
+        }
+    }
+
+    @ViewBuilder
+    private var titleArtwork: some View {
+        if let url = game.metadata?.logoImageURL ?? game.metadata?.bannerImageURL {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    EmptyView()
+                }
+            }
+            .frame(maxWidth: 420, maxHeight: 92, alignment: .leading)
+            .shadow(color: .black.opacity(0.55), radius: 14, y: 8)
+        }
+    }
+
+    @ViewBuilder
+    private var trailerButton: some View {
+        if let trailer = trailer {
+            Button {
+                activeTrailer = trailer
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.caption.bold())
+                    Text("Trailer")
+                        .font(.caption.bold())
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(.red.opacity(0.52), in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(.white.opacity(0.14))
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Watch trailer")
+        }
+    }
+
+    private var trailer: YouTubeTrailer? {
+        guard let url = game.metadata?.youtubeURL else { return nil }
+        return YouTubeTrailer(title: "\(displayTitle) Trailer", url: url)
+    }
+
+    @ViewBuilder
+    private var gamesDatabaseLink: some View {
+        if let link = gamesDatabaseLinkDetails {
+            Link(destination: link.url) {
+                HStack(spacing: 7) {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.caption.bold())
+                    Text(link.title)
+                        .font(.caption.bold())
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(.black.opacity(0.44), in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(.white.opacity(0.12))
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Open this game on \(link.title)")
+        }
+    }
+
+    private var detailRows: [(label: String, value: String)] {
+        let metadata = game.metadata
+        return [
+            ("Genres", joined(metadata?.genres, limit: 4))
+        ].compactMap { row in
+            guard let value = row.1 else { return nil }
+            return (row.0, value)
+        }
+    }
+
+    private var creditRows: [(label: String, value: String)] {
+        let metadata = game.metadata
+        return [
+            ("Developer", joined(metadata?.developers, limit: 3)),
+            ("Publisher", joined(metadata?.publishers, limit: 3))
+        ].compactMap { row in
+            guard let value = cleaned(row.1) else { return nil }
+            return (row.0, value)
+        }
+    }
+
+    private var gamesDatabaseLinkDetails: (title: String, url: URL)? {
+        guard let metadata = game.metadata else { return nil }
+
+        if metadata.provider == "ScreenScraper",
+           let gameID = metadata.providerID.split(separator: ":").first,
+           let url = URL(string: "https://www.screenscraper.fr/gameinfos.php?gameid=\(gameID)") {
+            return ("ScreenScraper", url)
+        }
+
+        guard let id = cleaned(metadata.providerID),
+              let url = URL(string: "https://thegamesdb.net/game.php?id=\(id)")
+        else {
+            return nil
+        }
+        return ("TheGamesDB", url)
+    }
+
+    private var fileCountRows: [(type: LibraryContentType, count: Int, size: UInt64)] {
+        [
+            (.mainGame, game.mainGames),
+            (.update, game.updates),
+            (.dlc, game.dlcs),
+            (.other, game.others)
+        ].compactMap { type, items in
+            guard !items.isEmpty else { return nil }
+            return (type, items.count, totalSize(for: items))
+        }
+    }
+
+    private var totalInstallSize: UInt64 {
+        totalSize(for: game.installOrderedItems)
+    }
+
+    private func totalSize(for items: [LibraryItem]) -> UInt64 {
+        items.reduce(UInt64(0)) { $0 + $1.size }
+    }
+
+    private func formattedSize(_ size: UInt64) -> String {
+        ByteCountFormatter.string(
+            fromByteCount: Int64(min(size, UInt64(Int64.max))),
+            countStyle: .file
+        )
+    }
+
+    private func formattedFileSummary(count: Int, size: UInt64) -> String {
+        "\(count) • \(formattedSize(size))"
+    }
+
+    private var mediaURLs: [URL] {
+        var seen = Set<URL>()
+        var urls: [URL] = []
+
+        func append(_ url: URL?) {
+            guard let url, !seen.contains(url) else { return }
+            seen.insert(url)
+            urls.append(url)
+        }
+
+        append(game.metadata?.logoImageURL)
+        append(game.metadata?.bannerImageURL)
+        append(game.metadata?.artworkImageURL)
+        append(game.metadata?.coverImageURL)
+        game.metadata?.screenshotImageURLs.forEach { append($0) }
+        return urls
+    }
+
+    private func detailGrid(columns: Int) -> some View {
+        let rows = columns < 3 ? detailRows + Array(creditRows.prefix(2)) : detailRows
+        let gridColumns = Array(repeating: GridItem(.flexible(minimum: 118), spacing: 10), count: columns)
+
+        return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                infoTile(label: row.label, value: row.value)
+            }
+        }
+    }
+
+    private func infoTile(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white.opacity(0.46))
+                .lineLimit(1)
+
+            Text(value)
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 54, alignment: .topLeading)
+        .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+    }
+
+    private var creditsPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Credits")
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.72))
+
+            if creditRows.isEmpty {
+                Text("No studio or publisher details cached yet.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(creditRows.enumerated()), id: \.offset) { _, row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.label)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white.opacity(0.48))
+                        Text(row.value)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.78))
+                            .lineLimit(3)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+    }
+
+    @ViewBuilder
+    private var trailerLink: some View {
+        if let trailer = trailer {
+            Button {
+                activeTrailer = trailer
+            } label: {
+                Label("Watch Trailer", systemImage: "play.rectangle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+        }
+    }
+
+    private var localFileSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(game.installOrderedItems.count) install item\(game.installOrderedItems.count == 1 ? "" : "s") • \(formattedSize(totalInstallSize))")
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.76))
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+
+            ForEach(Array(fileCountRows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 8) {
+                    LibraryTypePill(type: row.type, compact: true)
+                    Text(formattedFileSummary(count: row.count, size: row.size))
+                        .font(.caption.bold())
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.80))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(10)
+        .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+    }
+
+    @ViewBuilder
+    private var mediaStrip: some View {
+        let urls = mediaURLs
+        if !urls.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Text("Media")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white.opacity(0.70))
+                    Text("\(urls.count) image\(urls.count == 1 ? "" : "s")")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white.opacity(0.44))
+                    Spacer()
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(urls.prefix(10)), id: \.self) { url in
+                            AsyncImage(url: url) { phase in
+                                if let image = phase.image {
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                } else {
+                                    Rectangle()
+                                        .fill(.white.opacity(0.08))
+                                        .overlay {
+                                            Image(systemName: "photo")
+                                                .foregroundStyle(.white.opacity(0.28))
+                                        }
+                                }
+                            }
+                            .frame(width: 190, height: 106)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.10))
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(.white.opacity(0.07))
+            }
+        }
+    }
+
+    private var localPreview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(game.installOrderedItems.count) local file\(game.installOrderedItems.count == 1 ? "" : "s") • \(formattedSize(totalInstallSize))")
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.72))
+
+            ForEach(game.installOrderedItems) { item in
+                HStack(spacing: 8) {
+                    LibraryTypePill(type: item.contentType, compact: true)
+                    Text(item.url.lastPathComponent)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.white.opacity(0.72))
+                    Spacer(minLength: 8)
+                    Text(formattedSize(item.size))
+                        .font(.caption2.bold())
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .foregroundStyle(.white.opacity(0.54))
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+    }
+
+    private func cleaned(_ value: String?) -> String? {
+        let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
+    }
+
+    private func joined(_ values: [String]?, limit: Int) -> String? {
+        let cleanedValues = Array((values ?? [])
+            .compactMap { cleaned($0) }
+            .prefix(limit))
+        let text = cleanedValues.joined(separator: ", ")
+        return text.isEmpty ? nil : text
+    }
+}
+
 private struct HorizontalWheelScrollView<Content: View>: NSViewRepresentable {
     let content: Content
 
@@ -1136,7 +1996,7 @@ private struct HomebrewCatalogRow: View {
 
 private struct LibraryGameDetailSheet: View {
     @EnvironmentObject private var model: SwitchLoaderModel
-    @State private var isShowingManualMatch = false
+    @State private var manualMatchProvider: MetadataProviderKind?
     let game: LibraryGame
     let close: () -> Void
 
@@ -1157,10 +2017,15 @@ private struct LibraryGameDetailSheet: View {
                     .foregroundStyle(.secondary)
                     .padding(.leading, 8)
                 Spacer()
-                Button {
-                    isShowingManualMatch = true
-                } label: {
-                    Label(game.metadata == nil ? "Manual Match" : "Fix Match", systemImage: "magnifyingglass")
+                HStack(spacing: 8) {
+                    ForEach(MetadataProviderKind.allCases) { provider in
+                        Button {
+                            manualMatchProvider = provider
+                        } label: {
+                            Label(provider.title, systemImage: game.hasMetadata(from: provider) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        }
+                        .tint(game.hasMetadata(from: provider) ? .green : .red)
+                    }
                 }
                 Button(action: close) {
                     Label("Close", systemImage: "xmark")
@@ -1195,12 +2060,17 @@ private struct LibraryGameDetailSheet: View {
                                         .font(.title3.bold())
                                     Text("Use Manual Match to pick the correct Nintendo Switch entry and save artwork/details for this game.")
                                         .foregroundStyle(.secondary)
-                                    Button {
-                                        isShowingManualMatch = true
-                                    } label: {
-                                        Label("Manual Match", systemImage: "magnifyingglass")
+                                    HStack {
+                                        ForEach(MetadataProviderKind.allCases) { provider in
+                                            Button {
+                                                manualMatchProvider = provider
+                                            } label: {
+                                                Label(provider.matchTitle, systemImage: game.hasMetadata(from: provider) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .tint(game.hasMetadata(from: provider) ? .green : .red)
+                                        }
                                     }
-                                    .buttonStyle(.borderedProminent)
                                 }
                                 .font(.body)
                                 .foregroundStyle(.secondary)
@@ -1218,8 +2088,8 @@ private struct LibraryGameDetailSheet: View {
                 .padding(24)
             }
         }
-        .sheet(isPresented: $isShowingManualMatch) {
-            ManualMetadataMatchSheet(game: currentGame)
+        .sheet(item: $manualMatchProvider) { provider in
+            ManualMetadataMatchSheet(game: currentGame, provider: provider)
                 .environmentObject(model)
                 .frame(minWidth: 720, minHeight: 560)
         }
@@ -1484,14 +2354,17 @@ private struct ManualMetadataMatchSheet: View {
     @EnvironmentObject private var model: SwitchLoaderModel
     @Environment(\.dismiss) private var dismiss
     let game: LibraryGame
+    let provider: MetadataProviderKind
     @State private var query: String
     @State private var matches: [GameMetadataMatch] = []
     @State private var message = ""
     @State private var isSearching = false
     @State private var isApplying = false
+    @State private var searchTask: Task<Void, Never>?
 
-    init(game: LibraryGame) {
+    init(game: LibraryGame, provider: MetadataProviderKind) {
         self.game = game
+        self.provider = provider
         _query = State(initialValue: game.title)
     }
 
@@ -1499,9 +2372,9 @@ private struct ManualMetadataMatchSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Manual Match")
+                    Text(provider.matchTitle)
                         .font(.title2.bold())
-                    Text("Search Nintendo Switch entries and save the correct artwork/details for \(game.title).")
+                    Text("Search \(provider.title) Nintendo Switch entries and save the correct artwork/details for \(game.title).")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1515,14 +2388,18 @@ private struct ManualMetadataMatchSheet: View {
                 TextField("Search title", text: $query)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit {
-                        Task { await search() }
+                        startSearch()
                     }
                 Button {
-                    Task { await search() }
+                    if isSearching {
+                        cancelSearch()
+                    } else {
+                        startSearch()
+                    }
                 } label: {
-                    Label(isSearching ? "Searching" : "Search", systemImage: "magnifyingglass")
+                    Label(isSearching ? "Cancel" : "Search", systemImage: isSearching ? "xmark.circle" : "magnifyingglass")
                 }
-                .disabled(isSearching || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!isSearching && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             if !message.isEmpty {
@@ -1568,32 +2445,60 @@ private struct ManualMetadataMatchSheet: View {
             }
         }
         .padding(20)
-        .task {
-            if matches.isEmpty && message.isEmpty {
-                await search()
+        .onAppear {
+            if message.isEmpty {
+                message = "Search \(provider.title) when you are ready."
             }
         }
+        .onDisappear {
+            searchTask?.cancel()
+            searchTask = nil
+        }
+    }
+
+    private func startSearch() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        searchTask?.cancel()
+        searchTask = Task {
+            await search()
+        }
+    }
+
+    private func cancelSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        isSearching = false
+        message = "Search cancelled."
     }
 
     private func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isSearching = true
-        message = "Searching Nintendo Switch matches..."
+        message = "Searching \(provider.title) Nintendo Switch matches..."
+        defer {
+            isSearching = false
+            searchTask = nil
+        }
         do {
-            matches = try await model.searchMetadataMatches(for: trimmed)
-            message = matches.isEmpty ? "No Nintendo Switch matches found. Try a shorter title." : "Found \(matches.count) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
+            matches = try await model.searchMetadataMatches(for: trimmed, provider: provider)
+            guard !Task.isCancelled else { return }
+            message = matches.isEmpty ? "No \(provider.title) Nintendo Switch matches found. Try a shorter title." : "Found \(matches.count) \(provider.title) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
         } catch {
+            guard !Task.isCancelled else {
+                message = "Search cancelled."
+                return
+            }
             message = error.localizedDescription
         }
-        isSearching = false
     }
 
     private func apply(_ match: GameMetadataMatch) async {
         isApplying = true
         message = "Saving \(match.title)..."
         do {
-            try await model.applyMetadataMatch(match, to: game)
+            try await model.applyMetadataMatch(match, to: game, provider: provider)
             dismiss()
         } catch {
             message = error.localizedDescription
@@ -1603,28 +2508,90 @@ private struct ManualMetadataMatchSheet: View {
 }
 
 private struct MetadataSettingsSheet: View {
+    @EnvironmentObject private var model: SwitchLoaderModel
     @Binding var apiKey: String
+    @Binding var screenScraperCredentials: ScreenScraperCredentials
+    @State private var activeMetadataTest: MetadataProviderTest?
+    @State private var testResult: MetadataTestResult?
+    @State private var isShowingScreenScraperAdvanced = false
     let onSave: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("TGDB Artwork")
+            Text("Metadata Artwork")
                 .font(.title2.bold())
 
-            Text("Paste a TheGamesDB API key to fetch banner art, covers, summaries, and release details for games found in your library.")
+            Text("Add TheGamesDB or ScreenScraper details to fetch cleaner artwork, fanart, summaries, and game details for your library. Saved credentials stay in SwitchLoader's local settings file.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            SecureField("TheGamesDB API key", text: $apiKey)
-                .textFieldStyle(.roundedBorder)
+            GroupBox("TheGamesDB") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SecureField("API key", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button {
+                        testTheGamesDB()
+                    } label: {
+                        Label(activeMetadataTest == .theGamesDB ? "Testing" : "Test TheGamesDB", systemImage: "checkmark.circle")
+                    }
+                    .disabled(activeMetadataTest != nil)
+                }
+                .padding(.top, 4)
+            }
+
+            GroupBox("ScreenScraper") {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Username", text: $screenScraperCredentials.memberUsername)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("Password", text: $screenScraperCredentials.memberPassword)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Use your ScreenScraper account password here. If the test says user identifiers failed, try the Password shown on your ScreenScraper account/API page, not the Debug Password.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        testScreenScraper()
+                    } label: {
+                        Label(activeMetadataTest == .screenScraper ? "Testing" : "Test ScreenScraper", systemImage: "checkmark.circle")
+                    }
+                    .disabled(activeMetadataTest != nil)
+
+                    DisclosureGroup("Advanced app credentials", isExpanded: $isShowingScreenScraperAdvanced) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Most apps hide these because they ship with their own ScreenScraper app credentials. SwitchLoader keeps them in its local settings file for this development build.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            TextField("Dev username", text: $screenScraperCredentials.devUsername)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField("Debug password", text: $screenScraperCredentials.debugPassword)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Software name", text: $screenScraperCredentials.softwareName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        .padding(.top, 8)
+                    }
+                }
+                .padding(.top, 4)
+            }
 
             HStack {
                 Button("Cancel", action: onCancel)
                 Spacer()
-                Button("Clear Key") {
+                Button("Clear All") {
                     apiKey = ""
+                    screenScraperCredentials = ScreenScraperCredentials(
+                        devUsername: "",
+                        debugPassword: "",
+                        softwareName: "SwitchLoader",
+                        memberUsername: "",
+                        memberPassword: ""
+                    )
                     onSave()
                 }
                 Button("Save") {
@@ -1634,7 +2601,61 @@ private struct MetadataSettingsSheet: View {
             }
         }
         .padding(20)
+        .alert(item: $testResult) { result in
+            Alert(
+                title: Text(result.title),
+                message: Text(result.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
+
+    private func testTheGamesDB() {
+        activeMetadataTest = .theGamesDB
+        Task {
+            do {
+                let message = try await model.testTheGamesDBAPIKey(apiKey)
+                await MainActor.run {
+                    testResult = MetadataTestResult(title: "TheGamesDB Test Passed", message: message)
+                    activeMetadataTest = nil
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = MetadataTestResult(title: "TheGamesDB Test Failed", message: error.localizedDescription)
+                    activeMetadataTest = nil
+                }
+            }
+        }
+    }
+
+    private func testScreenScraper() {
+        activeMetadataTest = .screenScraper
+        Task {
+            do {
+                let message = try await model.testScreenScraperCredentials(screenScraperCredentials)
+                await MainActor.run {
+                    testResult = MetadataTestResult(title: "ScreenScraper Test Passed", message: message)
+                    activeMetadataTest = nil
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = MetadataTestResult(title: "ScreenScraper Test Failed", message: error.localizedDescription)
+                    activeMetadataTest = nil
+                }
+            }
+        }
+    }
+}
+
+private enum MetadataProviderTest {
+    case theGamesDB
+    case screenScraper
+}
+
+private struct MetadataTestResult: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 private struct CustomHomebrewSheet: View {
