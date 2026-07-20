@@ -30,6 +30,7 @@ SwitchLoaderReceiverNative/*.nacp
 SwitchLoaderReceiverNative/*.nro
 SwitchLoaderReceiverNative/dist/**/*.nro
 SwitchLoaderReceiverNative/dist/**/*.nsp
+SwitchLoaderReceiverNative/dist/*.zip
 
 # Local editor state
 .vscode/

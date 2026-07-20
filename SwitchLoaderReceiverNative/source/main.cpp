@@ -2,30 +2,36 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <memory>
 #include <string>
-#include <sys/stat.h>
 #include <vector>
+
+// Vendored Awoo install engine
+#include "install/usb_nsp.hpp"
+#include "install/install_nsp.hpp"
+#include "install/usb_xci.hpp"
+#include "install/install_xci.hpp"
+#include "data/buffered_placeholder_writer.hpp"
+#include "util/util.hpp"
+#include "nx/ipc/es.h"
+#include "nx/ipc/ns_ext.h"
 
 namespace {
 
 constexpr u16 kVendorId = 0x057E;
 constexpr u16 kProductId = 0x3000;
-constexpr u16 kProtocolVersion = 1;
-constexpr size_t kBufferSize = 0x1000;
-constexpr u64 kProgressRenderInterval = 8 * 1024 * 1024;
-constexpr const char* kInboxDirectory = "sdmc:/switch/SwitchLoaderReceiver/inbox";
+constexpr size_t kUsbBufferSize = 0x100000;             // 1 MiB page-aligned USB DMA buffer
 constexpr u32 kScreenWidth = 1280;
 constexpr u32 kScreenHeight = 720;
 
-struct FileEntry {
-    std::string name;
-    u64 size;
-};
+// ---- Tinfoil USB protocol magics ----
+constexpr u32 kTulMagic = 0x304C5554; // "TUL0" - Tinfoil Usb List 0 (PC -> Switch, once)
+constexpr u32 kTucMagic = 0x30435554; // "TUC0" - Tinfoil Usb Command 0 (both directions)
 
 enum class ScreenMode {
     Waiting,
@@ -40,7 +46,8 @@ struct ScreenState {
     std::string title = "Ready to receive";
     std::string detail = "Choose files in SwitchLoader on your Mac, then send to this receiver.";
     std::string fileName;
-    std::string footer = "Press + to exit";
+    std::string footer = "+ EXIT    X CHANGE INSTALL TARGET";
+    bool systemMemory = false;   // false = SD card, true = internal (NAND) storage
     u64 received = 0;
     u64 total = 0;
     size_t fileIndex = 0;
@@ -219,20 +226,28 @@ public:
         if (state.mode == ScreenMode::Receiving || state.mode == ScreenMode::Complete) {
             drawProgress(516, 482, 642, 24, state.progress);
             char percentLine[128]{};
-            std::snprintf(
-                percentLine,
-                sizeof(percentLine),
-                "%d%%  %llu / %llu BYTES",
-                state.progress,
-                static_cast<unsigned long long>(state.received),
-                static_cast<unsigned long long>(state.total)
-            );
+            if (state.total > 0) {
+                std::snprintf(
+                    percentLine,
+                    sizeof(percentLine),
+                    "%d%%  %llu / %llu BYTES",
+                    state.progress,
+                    static_cast<unsigned long long>(state.received),
+                    static_cast<unsigned long long>(state.total)
+                );
+            } else {
+                std::snprintf(percentLine, sizeof(percentLine), "%d%%", state.progress);
+            }
             drawText(percentLine, 516, 526, 2, color(170, 170, 176), 642);
         }
 
         if (state.mode == ScreenMode::Waiting) {
-            drawText("WAITING FOR THE MAC APP", 516, 328, 3, color(120, 205, 228), 642);
-            drawText("CHOOSE FILES, THEN PRESS SEND TO SWITCHLOADER RECEIVER.", 516, 376, 2, color(178, 178, 184), 642);
+            drawText("WAITING FOR THE MAC APP", 516, 300, 3, color(120, 205, 228), 642);
+            drawText("CHOOSE FILES, THEN PRESS SEND TO SWITCHLOADER RECEIVER.", 516, 348, 2, color(178, 178, 184), 642);
+            char targetLine[80]{};
+            std::snprintf(targetLine, sizeof(targetLine), "INSTALL TARGET: %s", state.systemMemory ? "SYSTEM MEMORY" : "SD CARD");
+            drawText(targetLine, 516, 396, 3, color(226, 226, 229), 642);
+            drawText("PRESS X TO CHANGE INSTALL TARGET", 516, 444, 2, color(150, 150, 156), 642);
         }
 
         framebufferEnd(&framebuffer);
@@ -405,7 +420,12 @@ bool userRequestedExit() {
         return false;
     }
     padUpdate(activePad);
-    return (padGetButtonsDown(activePad) & HidNpadButton_Plus) != 0;
+    const u64 kDown = padGetButtonsDown(activePad);
+    // While idle on the waiting screen, X toggles the install destination.
+    if (activeState != nullptr && activeState->mode == ScreenMode::Waiting && (kDown & HidNpadButton_X)) {
+        activeState->systemMemory = !activeState->systemMemory;
+    }
+    return (kDown & HidNpadButton_Plus) != 0;
 }
 
 void renderActiveScreen() {
@@ -414,29 +434,72 @@ void renderActiveScreen() {
     }
 }
 
-bool readExact(void* destination, size_t size) {
-    auto* cursor = static_cast<u8*>(destination);
-    size_t received = 0;
+// ---------------------------------------------------------------------------
+// Tinfoil USB protocol wire structures
+// ---------------------------------------------------------------------------
 
-    while (received < size && appletMainLoop()) {
-        if (userRequestedExit()) {
+// PC -> Switch, sent once when the Mac app starts a transfer.
+struct TinfoilListHeader {
+    u32 magic;          // "TUL0"
+    u32 titleListSize;  // bytes of newline-separated file names that follow
+    u64 padding;
+} NX_PACKED;
+static_assert(sizeof(TinfoilListHeader) == 0x10, "TinfoilListHeader must be 0x10");
+
+// Command header, exchanged both directions (0x20 bytes).
+struct UsbCmdHeader {
+    u32 magic;          // "TUC0"
+    u8 type;            // 0 = REQUEST (Switch -> PC), 1 = RESPONSE (PC -> Switch)
+    u8 padding[3];
+    u32 cmdId;          // 0 = exit, 1 = file range
+    u64 dataSize;       // number of payload bytes that follow this header
+    u8 reserved[0xC];
+} NX_PACKED;
+static_assert(sizeof(UsbCmdHeader) == 0x20, "UsbCmdHeader must be 0x20");
+
+// Body of a file-range request (0x20 bytes), followed by nameLen name bytes.
+struct FileRangeCmdHeader {
+    u64 size;
+    u64 offset;
+    u64 nameLen;
+    u64 padding;
+} NX_PACKED;
+static_assert(sizeof(FileRangeCmdHeader) == 0x20, "FileRangeCmdHeader must be 0x20");
+
+// ---------------------------------------------------------------------------
+// Low-level USB helpers
+// ---------------------------------------------------------------------------
+
+// Responsive blocking write. Small headers only, so a plain blocking write is
+// fine: the Mac app is actively servicing us whenever we send a command.
+bool usbWriteExact(const void* src, size_t size) {
+    const u8* cursor = static_cast<const u8*>(src);
+    size_t remaining = size;
+    while (remaining > 0) {
+        const size_t written = usbCommsWrite(cursor, remaining);
+        if (written == 0) {
             return false;
         }
-
-        const size_t count = usbCommsRead(cursor + received, size - received);
-        if (count == 0) {
-            renderActiveScreen();
-            svcSleepThread(16'000'000);
-            continue;
-        }
-        received += count;
+        cursor += written;
+        remaining -= written;
     }
-
-    return received == size;
+    return true;
 }
 
-bool readBodyChunk(void* destination, size_t size, size_t& transferred) {
+// Single page-aligned DMA buffer that ALL USB reads land in. libnx's async USB
+// read (usbCommsReadAsync -> usbDsEndpoint_PostBufferAsync) requires the buffer
+// to be 0x1000-aligned; posting an unaligned buffer fails to arm the endpoint,
+// which manifests on the host as a timeout on the very first transfer. So we
+// never read straight into caller structs -- we read here, then copy out.
+u8* g_rxBuffer = nullptr;
+
+// Reads one URB (up to min(size, kUsbBufferSize) bytes) into g_rxBuffer, keeping
+// the UI responsive and honouring the + exit button. Returns false on user exit
+// or fatal error; on success `transferred` holds the byte count sitting in
+// g_rxBuffer.
+bool usbReadRaw(size_t size, size_t& transferred) {
     transferred = 0;
+    const size_t request = std::min(size, kUsbBufferSize);
 
     while (appletMainLoop()) {
         if (userRequestedExit()) {
@@ -444,61 +507,78 @@ bool readBodyChunk(void* destination, size_t size, size_t& transferred) {
         }
 
         u32 urbId = 0;
-        Result rc = usbCommsReadAsync(destination, size, &urbId, 0);
+        Result rc = usbCommsReadAsync(g_rxBuffer, request, &urbId, 0);
         if (R_FAILED(rc)) {
             renderActiveScreen();
-            svcSleepThread(1'000'000);
+            svcSleepThread(2'000'000);
             continue;
         }
 
         Event* completionEvent = usbCommsGetReadCompletionEvent(0);
+        bool completed = false;
         while (appletMainLoop()) {
             if (userRequestedExit()) {
                 return false;
             }
-
             rc = eventWait(completionEvent, 16'000'000);
             if (R_SUCCEEDED(rc)) {
                 eventClear(completionEvent);
+                completed = true;
                 break;
             }
-
             renderActiveScreen();
         }
+        if (!completed) {
+            return false;
+        }
 
-        u32 transferredSize = 0;
-        rc = usbCommsGetReadResult(urbId, &transferredSize, 0);
+        u32 got = 0;
+        rc = usbCommsGetReadResult(urbId, &got, 0);
         if (R_FAILED(rc)) {
             renderActiveScreen();
-            svcSleepThread(1'000'000);
+            svcSleepThread(2'000'000);
             continue;
         }
-
-        if (transferredSize == 0) {
+        if (got == 0) {
             renderActiveScreen();
-            svcSleepThread(1'000'000);
             continue;
         }
 
-        transferred = transferredSize;
+        transferred = got;
         return true;
     }
 
     return false;
 }
 
-template <typename T>
-bool readLittleEndian(T& value) {
-    std::array<u8, sizeof(T)> bytes{};
-    if (!readExact(bytes.data(), bytes.size())) {
-        return false;
-    }
-
-    value = 0;
-    for (size_t index = 0; index < bytes.size(); index += 1) {
-        value |= static_cast<T>(bytes[index]) << static_cast<T>(index * 8);
+// Reads exactly `size` bytes into an arbitrary (possibly unaligned) destination
+// by bouncing through the aligned g_rxBuffer. False on exit / error.
+bool usbReadExact(void* destination, size_t size) {
+    auto* cursor = static_cast<u8*>(destination);
+    size_t received = 0;
+    while (received < size) {
+        size_t got = 0;
+        if (!usbReadRaw(size - received, got)) {
+            return false;
+        }
+        std::memcpy(cursor + received, g_rxBuffer, got);
+        received += got;
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Tinfoil command helpers
+// ---------------------------------------------------------------------------
+
+// Tells the PC the session is finished (Awoo/Tinfoil expects this).
+bool sendExitCommand() {
+    UsbCmdHeader cmd{};
+    cmd.magic = kTucMagic;
+    cmd.type = 0;
+    cmd.cmdId = 0; // exit
+    cmd.dataSize = 0;
+    return usbWriteExact(&cmd, sizeof(cmd));
 }
 
 std::string lowercased(std::string value) {
@@ -508,105 +588,26 @@ std::string lowercased(std::string value) {
     return value;
 }
 
-bool isAllowedInstallRoot(const std::string& component) {
-    const std::string root = lowercased(component);
-    return root == "atmosphere" || root == "bootloader" || root == "config" || root == "switch" || root == "themes";
+bool endsWith(const std::string& value, const char* suffix) {
+    const size_t len = std::strlen(suffix);
+    return value.size() >= len && value.compare(value.size() - len, len, suffix) == 0;
 }
 
-std::string safePathComponent(const std::string& name) {
-    std::string output;
-    output.reserve(name.size());
+bool isXciName(const std::string& name) { return endsWith(lowercased(name), ".xci"); }
+bool isNspName(const std::string& name) { return endsWith(lowercased(name), ".nsp"); }
 
-    for (const char character : name) {
-        switch (character) {
-            case '/':
-            case ':':
-            case '?':
-            case '#':
-            case '[':
-            case ']':
-            case '@':
-            case '!':
-            case '$':
-            case '&':
-            case '\'':
-            case '(':
-            case ')':
-            case '*':
-            case '+':
-            case ',':
-            case ';':
-            case '=':
-                output.push_back('_');
-                break;
-            default:
-                output.push_back(character);
-                break;
-        }
-    }
-
-    if (output.empty() || output == "." || output == "..") {
-        return "_";
-    }
-
-    return output;
+std::string safeDisplayName(const std::string& name) {
+    const size_t slash = name.find_last_of("/\\");
+    return (slash == std::string::npos) ? name : name.substr(slash + 1);
 }
 
-std::string safeRelativePath(const std::string& path) {
-    std::vector<std::string> components;
-    std::string current;
+// ---------------------------------------------------------------------------
+// Transfer stages
+// ---------------------------------------------------------------------------
 
-    for (const char character : path) {
-        if (character == '/' || character == '\\') {
-            if (!current.empty()) {
-                components.push_back(safePathComponent(current));
-                current.clear();
-            }
-        } else {
-            current.push_back(character);
-        }
-    }
-
-    if (!current.empty()) {
-        components.push_back(safePathComponent(current));
-    }
-
-    components.erase(
-        std::remove_if(components.begin(), components.end(), [](const std::string& component) {
-            return component.empty() || component == ".";
-        }),
-        components.end()
-    );
-
-    if (components.empty()) {
-        components = {"switch", "SwitchLoaderReceiver", "received.bin"};
-    } else if (!isAllowedInstallRoot(components.front())) {
-        components.insert(components.begin(), {"switch", "SwitchLoaderReceiver", "Homebrew Assets"});
-    }
-
-    std::string output;
-    for (const std::string& component : components) {
-        if (!output.empty()) {
-            output.push_back('/');
-        }
-        output.append(component);
-    }
-    return output;
-}
-
-bool ensureParentDirectories(const std::string& path) {
-    size_t position = path.find('/', std::strlen("sdmc:/"));
-    while (position != std::string::npos) {
-        const std::string directory = path.substr(0, position);
-        if (mkdir(directory.c_str(), 0777) != 0 && errno != EEXIST) {
-            return false;
-        }
-        position = path.find('/', position + 1);
-    }
-    return true;
-}
-
-bool readManifest(std::vector<FileEntry>& files, ScreenState& state) {
+// Waits for the Mac app to push the TUL0 header + file list, then parses names.
+// Returns false on user exit (mode stays Waiting) or protocol error (mode Error).
+bool readTitleList(std::vector<std::string>& titles, ScreenState& state) {
     state.mode = ScreenMode::Waiting;
     state.title = "Ready to receive";
     state.detail = "Choose files in SwitchLoader on your Mac, then send to this receiver.";
@@ -614,150 +615,102 @@ bool readManifest(std::vector<FileEntry>& files, ScreenState& state) {
     state.progress = 0;
     renderActiveScreen();
 
-    char magic[4]{};
-    if (!readExact(magic, sizeof(magic)) || std::memcmp(magic, "SLR0", 4) != 0) {
+    TinfoilListHeader header{};
+    if (!usbReadExact(&header, sizeof(header))) {
+        return false; // user exit or USB dropped while waiting
+    }
+    if (header.magic != kTulMagic) {
+        state.mode = ScreenMode::Error;
+        state.title = "Unexpected data";
+        state.detail = "The Mac did not start with a Tinfoil file list.";
         return false;
     }
 
-    u16 version = 0;
-    u16 fileCount = 0;
-    if (!readLittleEndian(version) || !readLittleEndian(fileCount)) {
+    std::string listBuffer(header.titleListSize, '\0');
+    if (header.titleListSize != 0 && !usbReadExact(listBuffer.data(), header.titleListSize)) {
         state.mode = ScreenMode::Error;
-        state.title = "Manifest failed";
+        state.title = "File list failed";
         state.detail = "Could not read the file list from the Mac.";
         return false;
     }
 
-    if (version != kProtocolVersion) {
+    titles.clear();
+    std::string current;
+    for (const char character : listBuffer) {
+        if (character == '\n') {
+            if (!current.empty()) titles.push_back(current);
+            current.clear();
+        } else if (character != '\r') {
+            current.push_back(character);
+        }
+    }
+    if (!current.empty()) titles.push_back(current);
+
+    if (titles.empty()) {
         state.mode = ScreenMode::Error;
-        state.title = "Protocol mismatch";
-        state.detail = "Update SwitchLoader on both the Mac and the Switch.";
+        state.title = "Empty queue";
+        state.detail = "The Mac sent a file list with no entries.";
         return false;
     }
 
-    files.clear();
-    files.reserve(fileCount);
-
-    for (u16 index = 0; index < fileCount; index += 1) {
-        u16 nameLength = 0;
-        if (!readLittleEndian(nameLength) || nameLength == 0) {
-            state.mode = ScreenMode::Error;
-            state.title = "Bad file name";
-            state.detail = "The Mac sent an invalid queue entry.";
-            return false;
-        }
-
-        std::string name(nameLength, '\0');
-        if (!readExact(name.data(), nameLength)) {
-            state.mode = ScreenMode::Error;
-            state.title = "File list failed";
-            state.detail = "Could not read a file name from the Mac.";
-            return false;
-        }
-
-        u64 size = 0;
-        if (!readLittleEndian(size)) {
-            state.mode = ScreenMode::Error;
-            state.title = "File list failed";
-            state.detail = "Could not read a file size from the Mac.";
-            return false;
-        }
-
-        files.push_back({safeRelativePath(name), size});
-    }
+    std::sort(titles.begin(), titles.end(), [](const std::string& a, const std::string& b) {
+        return lowercased(a) < lowercased(b);
+    });
 
     state.mode = ScreenMode::Queue;
     state.title = "Queue received";
-    state.detail = "Installing Homebrew files into their SD card folders.";
-    state.fileCount = files.size();
+    state.detail = "Installing over USB...";
+    state.fileCount = titles.size();
     state.fileIndex = 0;
     renderActiveScreen();
     return true;
 }
 
-bool ensureInboxDirectory() {
-    mkdir("sdmc:/switch", 0777);
-    mkdir("sdmc:/switch/SwitchLoaderReceiver", 0777);
-    return mkdir(kInboxDirectory, 0777) == 0 || errno == EEXIST;
-}
-
-bool receiveFile(const FileEntry& file, size_t index, size_t count, u8* buffer, ScreenState& state) {
-    char fileMagic[4]{};
-    if (!readExact(fileMagic, sizeof(fileMagic)) || std::memcmp(fileMagic, "FILE", 4) != 0) {
-        state.mode = ScreenMode::Error;
-        state.title = "Transfer failed";
-        state.detail = "The next file marker was missing.";
-        state.fileName = file.name;
-        renderActiveScreen();
-        return false;
-    }
-
-    const std::string path = std::string("sdmc:/") + file.name;
-    if (!ensureParentDirectories(path)) {
-        state.mode = ScreenMode::Error;
-        state.title = "Folder create failed";
-        state.detail = "Could not create the Homebrew folder on the SD card.";
-        state.fileName = file.name;
-        renderActiveScreen();
-        return false;
-    }
-
-    FILE* output = std::fopen(path.c_str(), "wb");
-    if (output == nullptr) {
-        state.mode = ScreenMode::Error;
-        state.title = "SD write failed";
-        state.detail = "Could not open the inbox file for writing.";
-        state.fileName = file.name;
-        renderActiveScreen();
-        return false;
-    }
-
+// Installs one title straight into NCM using the vendored Awoo engine, which
+// pulls the NCA / ticket data over the Tinfoil range protocol and registers it.
+bool installTitle(const std::string& name, size_t index, size_t count, ScreenState& state) {
     state.mode = ScreenMode::Receiving;
-    state.title = "Installing Homebrew";
-    state.detail = "Writing generated Homebrew files to the SD card.";
-    state.fileName = file.name;
+    state.title = "Installing";
+    state.detail = state.systemMemory ? "Installing to system memory." : "Installing to SD card.";
+    state.fileName = safeDisplayName(name);
     state.fileIndex = index;
     state.fileCount = count;
     state.received = 0;
-    state.total = file.size;
+    state.total = 0;
     state.progress = 0;
     renderActiveScreen();
 
-    u64 received = 0;
-    u64 lastRendered = 0;
-    while (received < file.size && appletMainLoop()) {
-        const size_t nextSize = static_cast<size_t>(std::min<u64>(kBufferSize, file.size - received));
-        size_t transferred = 0;
-        if (!readBodyChunk(buffer, nextSize, transferred)) {
-            std::fclose(output);
+    const NcmStorageId storageId = state.systemMemory ? NcmStorageId_BuiltInUser : NcmStorageId_SdCard;
+
+    try {
+        if (isXciName(name)) {
+            auto xci = std::make_shared<tin::install::xci::USBXCI>(name);
+            tin::install::xci::XCIInstallTask task(storageId, true, xci);
+            task.Prepare();
+            task.Begin();
+        } else if (isNspName(name)) {
+            auto nsp = std::make_shared<tin::install::nsp::USBNSP>(name);
+            tin::install::nsp::NSPInstall task(storageId, true, nsp);
+            task.Prepare();
+            task.Begin();
+        } else {
             state.mode = ScreenMode::Error;
-            state.title = "USB read failed";
-            state.detail = "The cable transfer stopped before the file was complete.";
+            state.title = "Unsupported file";
+            state.detail = "This receiver installs .xci and .nsp files only.";
             renderActiveScreen();
             return false;
         }
-
-        const size_t written = std::fwrite(buffer, 1, transferred, output);
-        if (written != transferred) {
-            std::fclose(output);
-            state.mode = ScreenMode::Error;
-            state.title = "SD write failed";
-            state.detail = "The SD card could not save the incoming file.";
-            renderActiveScreen();
-            return false;
-        }
-
-        received += transferred;
-        state.received = received;
-        state.total = file.size;
-        state.progress = file.size == 0 ? 100 : static_cast<int>((received * 100) / file.size);
-        if (received == file.size || received - lastRendered >= kProgressRenderInterval) {
-            renderActiveScreen();
-            lastRendered = received;
-        }
+    } catch (std::exception& e) {
+        state.mode = ScreenMode::Error;
+        state.title = "Install failed";
+        std::string msg = e.what();
+        state.detail = msg.substr(0, std::min<size_t>(msg.size(), 90));
+        renderActiveScreen();
+        return false;
     }
 
-    std::fclose(output);
+    state.progress = 100;
+    renderActiveScreen();
     return true;
 }
 
@@ -772,6 +725,42 @@ void waitForExit(ScreenState& state) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Glue: the vendored engine reports progress via inst::ui::instPage and needs
+// inst::util helpers. Defined at namespace scope (external linkage) so the
+// engine links against them; they drive the on-screen ScreenState.
+// ---------------------------------------------------------------------------
+
+namespace inst::ui::instPage {
+    void setInstInfoText(std::string ourText) {
+        if (activeState != nullptr) { activeState->detail = ourText; renderActiveScreen(); }
+    }
+    void setInstBarPerc(double ourPercent) {
+        if (activeState != nullptr) { activeState->progress = static_cast<int>(ourPercent); renderActiveScreen(); }
+    }
+    void setTopInstInfoText(std::string ourText) {
+        if (activeState != nullptr) { activeState->title = ourText; renderActiveScreen(); }
+    }
+    void loadInstallScreen() {
+        if (activeState != nullptr) { activeState->mode = ScreenMode::Receiving; renderActiveScreen(); }
+    }
+    void loadMainMenu() {}
+}
+
+namespace inst::util {
+    std::string formatUrlString(std::string ourString) { return ourString; }
+    void initInstallServices() {
+        ncmInitialize();
+        nsextInitialize();
+        esInitialize();
+    }
+    void deinitInstallServices() {
+        esExit();
+        nsextExit();
+        ncmExit();
+    }
+}
 
 int main(int argc, char* argv[]) {
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
@@ -805,19 +794,12 @@ int main(int argc, char* argv[]) {
     }
 
     usbCommsSetErrorHandling(false);
-    if (!ensureInboxDirectory()) {
-        state.mode = ScreenMode::Error;
-        state.title = "Inbox unavailable";
-        state.detail = "Could not create sdmc:/switch/SwitchLoaderReceiver/inbox.";
-        renderActiveScreen();
-        waitForExit(state);
-        usbCommsExit();
-        ui.close();
-        return 1;
-    }
 
-    auto* buffer = static_cast<u8*>(std::aligned_alloc(0x1000, kBufferSize));
-    if (buffer == nullptr) {
+    inst::util::initInstallServices();
+    tin::data::NUM_BUFFER_SEGMENTS = 2;
+
+    g_rxBuffer = static_cast<u8*>(std::aligned_alloc(0x1000, kUsbBufferSize));
+    if (g_rxBuffer == nullptr) {
         state.mode = ScreenMode::Error;
         state.title = "Memory unavailable";
         state.detail = "Could not allocate the USB receive buffer.";
@@ -828,40 +810,47 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::vector<FileEntry> files;
+    std::vector<std::string> titles;
 
     while (appletMainLoop()) {
         if (userRequestedExit()) {
             break;
         }
 
-        if (!readManifest(files, state)) {
+        if (!readTitleList(titles, state)) {
             if (state.mode == ScreenMode::Error) {
                 renderActiveScreen();
                 svcSleepThread(1'000'000'000);
+                continue;
             }
-            continue;
+            break; // user requested exit while waiting
         }
 
         bool success = true;
-        for (size_t index = 0; index < files.size(); index += 1) {
-            if (!receiveFile(files[index], index + 1, files.size(), buffer, state)) {
+        for (size_t index = 0; index < titles.size(); index += 1) {
+            if (!installTitle(titles[index], index + 1, titles.size(), state)) {
                 success = false;
                 break;
             }
         }
 
+        // Always tell the PC we're done so it releases the USB pipe cleanly.
+        sendExitCommand();
+
         state.mode = success ? ScreenMode::Complete : ScreenMode::Error;
-        state.title = success ? "Transfer complete" : "Transfer failed";
-        state.detail = success ? "Files are saved in the SwitchLoader inbox on your SD card." : "Check the cable, SD card, and Mac app, then try again.";
+        state.title = success ? "Install complete" : "Install failed";
+        state.detail = success
+            ? (state.systemMemory ? "Installed to system memory." : "Installed to the SD card.")
+            : "Check the cable, SD card, and Mac app, then try again.";
         state.progress = success ? 100 : state.progress;
         renderActiveScreen();
         waitForExit(state);
         break;
     }
 
+    inst::util::deinitInstallServices();
     usbCommsExit();
-    std::free(buffer);
+    std::free(g_rxBuffer);
     ui.close();
     return 0;
 }

@@ -11,19 +11,19 @@ include $(DEVKITPRO)/libnx/switch_rules
 
 TARGET      := SwitchLoaderReceiverNative
 BUILD       := build
-SOURCES     := source
+SOURCES     := source source/install source/nx source/nx/ipc source/data source/util
 DATA        := data
-INCLUDES    := include
+INCLUDES    := include include/util include/install include/nx include/nx/ipc include/data include/ui
 
 APP_TITLE   := SwitchLoader Receiver
 APP_AUTHOR  := SwitchLoader
-APP_VERSION := 1.2.1
+APP_VERSION := 1.2.2
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
 CFLAGS      := -g -Wall -O2 -ffunction-sections $(ARCH) $(DEFINES)
 CFLAGS      += $(INCLUDE) -D__SWITCH__
-CXXFLAGS    := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+CXXFLAGS    := $(CFLAGS) -std=gnu++17
 ASFLAGS     := -g $(ARCH)
 LDFLAGS     = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS        := -lnx
