@@ -19,14 +19,7 @@ struct ContentView: View {
     @State private var selectedLibraryGame: LibraryGame?
     @State private var manualMatchRequest: ManualMetadataMatchRequest?
     @State private var isShowingMetadataSettings = false
-    @State private var metadataAPIKey = ""
-    @State private var screenScraperCredentials = ScreenScraperCredentials(
-        devUsername: "",
-        debugPassword: "",
-        softwareName: "SwitchLoader",
-        memberUsername: "",
-        memberPassword: ""
-    )
+    @State private var igdbCredentials = IGDBCredentials(clientID: "", clientSecret: "")
     @State private var isShowingCustomHomebrewSheet = false
     @State private var customHomebrewURL = ""
     @State private var customHomebrewError = ""
@@ -82,11 +75,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isShowingMetadataSettings) {
             MetadataSettingsSheet(
-                apiKey: $metadataAPIKey,
-                screenScraperCredentials: $screenScraperCredentials
+                credentials: $igdbCredentials
             ) {
-                model.saveTheGamesDBAPIKey(metadataAPIKey)
-                model.saveScreenScraperCredentials(screenScraperCredentials)
+                model.saveIGDBCredentials(igdbCredentials)
                 isShowingMetadataSettings = false
             } onCancel: {
                 isShowingMetadataSettings = false
@@ -352,8 +343,7 @@ struct ContentView: View {
                 .disabled(model.libraryDirectory == nil || model.isScanningLibrary)
 
                 Button {
-                    metadataAPIKey = model.loadTheGamesDBAPIKeyForEditing()
-                    screenScraperCredentials = model.loadScreenScraperSettingsForEditing()
+                    igdbCredentials = model.loadIGDBCredentialsForEditing()
                     isShowingMetadataSettings = true
                 } label: {
                     Label(model.hasAnyMetadataProvider ? "Metadata Connected" : "Metadata", systemImage: "photo.on.rectangle.angled")
@@ -923,6 +913,7 @@ private struct LibraryTypePill: View {
 }
 
 private struct LibraryFeaturedGamePanel: View {
+    @EnvironmentObject private var model: SwitchLoaderModel
     let game: LibraryGame
     let index: Int
     let count: Int
@@ -935,6 +926,10 @@ private struct LibraryFeaturedGamePanel: View {
     let addDLC: () -> Void
     let manualMatch: (MetadataProviderKind) -> Void
     @State private var activeTrailer: YouTubeTrailer?
+    @State private var activeMediaIndex: Int?
+    @State private var isShowingTitleArtworkEditor = false
+    @State private var titleArtworkURLString = ""
+    @State private var titleArtworkError = ""
 
     private var displayTitle: String {
         game.metadata?.matchedTitle ?? game.title
@@ -987,6 +982,8 @@ private struct LibraryFeaturedGamePanel: View {
                 navigation
                     .padding(.top, 22)
                     .padding(.horizontal, 24)
+
+                mediaOverlay(size: size)
             }
             .frame(width: size.width, height: size.height)
             .clipped()
@@ -996,16 +993,33 @@ private struct LibraryFeaturedGamePanel: View {
         .sheet(item: $activeTrailer) { trailer in
             TrailerPlayerSheet(trailer: trailer)
         }
+        .sheet(isPresented: $isShowingTitleArtworkEditor) {
+            TitleArtworkEditorSheet(
+                gameTitle: displayTitle,
+                imageURLString: $titleArtworkURLString,
+                errorMessage: titleArtworkError,
+                onSaveURL: saveTitleArtworkURL,
+                onChooseLocal: chooseLocalTitleArtwork,
+                onClear: clearTitleArtwork,
+                onCancel: {
+                    isShowingTitleArtworkEditor = false
+                }
+            )
+        }
     }
 
     private func content(size: CGSize) -> some View {
-        let isCompact = size.width < 960 || size.height < 700
-        let hasSideDetails = size.width >= 1160 && !isCompact
-        let posterWidth = isCompact ? 150.0 : 218.0
+        let isCompact = size.width < 980
+        let hasSideDetails = size.width >= 1050 && !isCompact
+        let isCinema = size.width >= 1700 && !isCompact
+        let isWide = size.width >= 1260 && !isCompact
+        let posterWidth = isCompact ? 150.0 : (isCinema ? 230.0 : (isWide ? 238.0 : 204.0))
+        let sideWidth = isCinema ? 300.0 : (isWide ? 340.0 : 292.0)
+        let mediaColumnWidth = isCinema ? 300.0 : 0.0
 
         return ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: isCompact ? 14 : 18) {
-                HStack(alignment: .top, spacing: isCompact ? 18 : 26) {
+                HStack(alignment: .top, spacing: isCompact ? 18 : (isCinema ? 30 : (isWide ? 34 : 26))) {
                     VStack(alignment: .leading, spacing: 14) {
                         poster
                             .frame(width: posterWidth, height: posterWidth * 1.5)
@@ -1048,7 +1062,7 @@ private struct LibraryFeaturedGamePanel: View {
                             .font(isCompact ? .caption : .callout)
                             .lineSpacing(4)
                             .foregroundStyle(.white.opacity(0.86))
-                            .lineLimit(isCompact ? 4 : 7)
+                            .lineLimit(isCompact ? 4 : (isCinema ? 7 : (isWide ? 9 : 7)))
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         typeRow
@@ -1060,11 +1074,14 @@ private struct LibraryFeaturedGamePanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .clipped()
 
-                        detailGrid(columns: hasSideDetails ? 3 : 2)
+                        detailGrid(columns: isCinema ? 3 : (isWide ? 4 : (hasSideDetails ? 3 : 2)))
                             .padding(.top, isCompact ? 0 : 4)
 
                         if isCompact {
                             localPreview
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if !hasSideDetails {
+                            localOverviewGrid
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -1072,21 +1089,41 @@ private struct LibraryFeaturedGamePanel: View {
 
                     if hasSideDetails {
                         VStack(alignment: .leading, spacing: 12) {
+                            quickFactsPanel
                             creditsPanel
-                            localPreview
+                            if isCinema {
+                                localOverviewGrid
+                            } else {
+                                localPreview
+                            }
                             trailerLink
                         }
-                        .frame(width: 280, alignment: .topLeading)
+                        .frame(width: sideWidth, alignment: .topLeading)
+                    }
+
+                    if isCinema {
+                        mediaGalleryPanel
+                            .frame(width: mediaColumnWidth, alignment: .topLeading)
                     }
                 }
 
                 if !isCompact {
-                    mediaStrip
+                    if isCinema {
+                        mediaStrip
+                    } else if isWide {
+                        HStack(alignment: .top, spacing: 14) {
+                            mediaStrip
+                            localOverviewGrid
+                                .frame(width: 360, alignment: .topLeading)
+                        }
+                    } else {
+                        mediaStrip
+                    }
                 }
             }
-            .padding(.top, isCompact ? 58 : 76)
-            .padding(.horizontal, isCompact ? 24 : 36)
-            .padding(.bottom, isCompact ? 20 : 28)
+            .padding(.top, isCompact ? 58 : 74)
+            .padding(.horizontal, isCompact ? 24 : (isWide ? 48 : 36))
+            .padding(.bottom, isCompact ? 20 : 30)
             .frame(maxWidth: .infinity, minHeight: size.height, alignment: .topLeading)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -1276,9 +1313,7 @@ private struct LibraryFeaturedGamePanel: View {
 
     private func sourceMatchButtons(compact: Bool) -> some View {
         HStack(spacing: 8) {
-            ForEach(MetadataProviderKind.allCases) { provider in
-                sourceMatchButton(provider: provider, compact: compact)
-            }
+            sourceMatchButton(provider: .theGamesDB, compact: compact)
         }
     }
 
@@ -1324,18 +1359,95 @@ private struct LibraryFeaturedGamePanel: View {
 
     @ViewBuilder
     private var titleArtwork: some View {
-        if let url = game.metadata?.logoImageURL ?? game.metadata?.bannerImageURL {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    EmptyView()
+        Button {
+            openTitleArtworkEditor()
+        } label: {
+            if let url = titleArtworkURL {
+                LibraryArtworkImage(url: url, contentMode: .fit) {
+                    titleArtworkPlaceholder
                 }
+                .frame(maxWidth: 420, maxHeight: 92, alignment: .leading)
+                .shadow(color: .black.opacity(0.55), radius: 14, y: 8)
+            } else {
+                titleArtworkPlaceholder
             }
-            .frame(maxWidth: 420, maxHeight: 92, alignment: .leading)
-            .shadow(color: .black.opacity(0.55), radius: 14, y: 8)
+        }
+        .buttonStyle(.plain)
+        .help("Choose custom title artwork")
+    }
+
+    private var titleArtworkURL: URL? {
+        game.metadata?.logoImageURL ?? game.metadata?.bannerImageURL
+    }
+
+    private var titleArtworkPlaceholder: some View {
+        Label("Choose Title Art", systemImage: "photo.badge.plus")
+            .font(.caption.bold())
+            .foregroundStyle(.white.opacity(0.82))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.black.opacity(0.32), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(.white.opacity(0.12))
+            }
+    }
+
+    private func openTitleArtworkEditor() {
+        titleArtworkURLString = game.metadata?.logoImageURL?.absoluteString ?? ""
+        titleArtworkError = ""
+        isShowingTitleArtworkEditor = true
+    }
+
+    private func saveTitleArtworkURL() {
+        let trimmed = titleArtworkURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https", "file"].contains(scheme)
+        else {
+            titleArtworkError = "Enter a valid image URL."
+            return
+        }
+
+        do {
+            if url.isFileURL {
+                try model.setCustomTitleArtworkFile(url, for: game)
+            } else {
+                try model.setCustomTitleArtworkURL(url, for: game)
+            }
+            isShowingTitleArtworkEditor = false
+        } catch {
+            titleArtworkError = error.localizedDescription
+        }
+    }
+
+    private func chooseLocalTitleArtwork() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Title Artwork"
+        panel.prompt = "Use Image"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try model.setCustomTitleArtworkFile(url, for: game)
+            titleArtworkURLString = url.path
+            isShowingTitleArtworkEditor = false
+        } catch {
+            titleArtworkError = error.localizedDescription
+        }
+    }
+
+    private func clearTitleArtwork() {
+        do {
+            try model.clearCustomTitleArtwork(for: game)
+            titleArtworkURLString = ""
+            isShowingTitleArtworkEditor = false
+        } catch {
+            titleArtworkError = error.localizedDescription
         }
     }
 
@@ -1399,6 +1511,9 @@ private struct LibraryFeaturedGamePanel: View {
     private var detailRows: [(label: String, value: String)] {
         let metadata = game.metadata
         return [
+            ("Release", cleaned(metadata?.releaseDate)),
+            ("Rating", cleaned(metadata?.rating)),
+            ("Modes", cleaned(metadata?.players)),
             ("Genres", joined(metadata?.genres, limit: 4))
         ].compactMap { row in
             guard let value = row.1 else { return nil }
@@ -1419,19 +1534,13 @@ private struct LibraryFeaturedGamePanel: View {
 
     private var gamesDatabaseLinkDetails: (title: String, url: URL)? {
         guard let metadata = game.metadata else { return nil }
-
-        if metadata.provider == "ScreenScraper",
-           let gameID = metadata.providerID.split(separator: ":").first,
-           let url = URL(string: "https://www.screenscraper.fr/gameinfos.php?gameid=\(gameID)") {
-            return ("ScreenScraper", url)
-        }
-
+        guard metadata.provider == "IGDB" else { return nil }
         guard let id = cleaned(metadata.providerID),
-              let url = URL(string: "https://thegamesdb.net/game.php?id=\(id)")
+              let url = URL(string: "https://www.igdb.com/games/\(id)")
         else {
             return nil
         }
-        return ("TheGamesDB", url)
+        return ("IGDB", url)
     }
 
     private var fileCountRows: [(type: LibraryContentType, count: Int, size: UInt64)] {
@@ -1463,6 +1572,19 @@ private struct LibraryFeaturedGamePanel: View {
 
     private func formattedFileSummary(count: Int, size: UInt64) -> String {
         "\(count) • \(formattedSize(size))"
+    }
+
+    private func label(for type: LibraryContentType) -> String {
+        switch type {
+        case .mainGame:
+            return "Main"
+        case .update:
+            return "Updates"
+        case .dlc:
+            return "DLC"
+        case .other:
+            return "Other"
+        }
     }
 
     private var mediaURLs: [URL] {
@@ -1511,6 +1633,42 @@ private struct LibraryFeaturedGamePanel: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(minHeight: 54, alignment: .topLeading)
+        .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+    }
+
+    private var quickFactsPanel: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("IGDB")
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.72))
+
+            if detailRows.isEmpty {
+                Text("No remote facts cached yet.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(detailRows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.label)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white.opacity(0.46))
+                            .frame(width: 58, alignment: .leading)
+                        Text(row.value)
+                            .font(.caption.bold())
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1595,6 +1753,39 @@ private struct LibraryFeaturedGamePanel: View {
         }
     }
 
+    private var localOverviewGrid: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Local Files")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white.opacity(0.70))
+                Spacer()
+                Text(formattedSize(totalInstallSize))
+                    .font(.caption2.bold())
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.48))
+            }
+
+            LazyVGrid(columns: [
+                GridItem(.flexible(minimum: 130), spacing: 10),
+                GridItem(.flexible(minimum: 130), spacing: 10)
+            ], alignment: .leading, spacing: 10) {
+                infoTile(label: "Items", value: "\(game.installOrderedItems.count)")
+                infoTile(label: "Total", value: formattedSize(totalInstallSize))
+                ForEach(Array(fileCountRows.enumerated()), id: \.offset) { _, row in
+                    infoTile(label: label(for: row.type), value: formattedFileSummary(count: row.count, size: row.size))
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.07))
+        }
+    }
+
     @ViewBuilder
     private var mediaStrip: some View {
         let urls = mediaURLs
@@ -1612,13 +1803,13 @@ private struct LibraryFeaturedGamePanel: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(Array(urls.prefix(10)), id: \.self) { url in
-                            AsyncImage(url: url) { phase in
-                                if let image = phase.image {
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                } else {
+                        ForEach(Array(urls.prefix(10).enumerated()), id: \.element) { offset, url in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.16)) {
+                                    activeMediaIndex = offset
+                                }
+                            } label: {
+                                LibraryArtworkImage(url: url, contentMode: .fill) {
                                     Rectangle()
                                         .fill(.white.opacity(0.08))
                                         .overlay {
@@ -1626,13 +1817,15 @@ private struct LibraryFeaturedGamePanel: View {
                                                 .foregroundStyle(.white.opacity(0.28))
                                         }
                                 }
+                                .frame(width: 190, height: 106)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(.white.opacity(0.10))
+                                }
                             }
-                            .frame(width: 190, height: 106)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(.white.opacity(0.10))
-                            }
+                            .buttonStyle(.plain)
+                            .help("Open image")
                         }
                     }
                 }
@@ -1644,6 +1837,172 @@ private struct LibraryFeaturedGamePanel: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(.white.opacity(0.07))
             }
+        }
+    }
+
+    @ViewBuilder
+    private var mediaGalleryPanel: some View {
+        let urls = Array(mediaURLs.prefix(8))
+        if !urls.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Media")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white.opacity(0.70))
+                    Text("\(mediaURLs.count)")
+                        .font(.caption2.bold())
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.44))
+                    Spacer()
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        activeMediaIndex = 0
+                    }
+                } label: {
+                    mediaThumbnail(url: urls[0], height: 118)
+                }
+                .buttonStyle(.plain)
+                .help("Open image")
+
+                LazyVGrid(columns: [
+                    GridItem(.flexible(), spacing: 8),
+                    GridItem(.flexible(), spacing: 8)
+                ], alignment: .leading, spacing: 8) {
+                    ForEach(Array(urls.dropFirst().enumerated()), id: \.element) { offset, url in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                activeMediaIndex = offset + 1
+                            }
+                        } label: {
+                            mediaThumbnail(url: url, height: 82)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open image")
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(.white.opacity(0.07))
+            }
+        }
+    }
+
+    private func mediaThumbnail(url: URL, height: CGFloat) -> some View {
+        LibraryArtworkImage(url: url, contentMode: .fill) {
+            Rectangle()
+                .fill(.white.opacity(0.08))
+                .overlay {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.white.opacity(0.28))
+                }
+        }
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.white.opacity(0.10))
+        }
+    }
+
+    @ViewBuilder
+    private func mediaOverlay(size: CGSize) -> some View {
+        let urls = Array(mediaURLs.prefix(10))
+        if let activeMediaIndex, urls.indices.contains(activeMediaIndex) {
+            ZStack {
+                Color.black.opacity(0.74)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        closeMediaOverlay()
+                    }
+
+                HStack(spacing: 18) {
+                    mediaArrow(systemName: "chevron.left") {
+                        showPreviousMedia(count: urls.count)
+                    }
+                    .opacity(urls.count > 1 ? 1 : 0)
+
+                    LibraryArtworkImage(url: urls[activeMediaIndex], contentMode: .fit) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(.black.opacity(0.34))
+                            ProgressView()
+                                .controlSize(.large)
+                        }
+                    }
+                    .frame(maxWidth: max(360, size.width * 0.70), maxHeight: max(260, size.height * 0.76))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.white.opacity(0.14))
+                    }
+                    .shadow(color: .black.opacity(0.62), radius: 34, y: 18)
+                    .onTapGesture {}
+
+                    mediaArrow(systemName: "chevron.right") {
+                        showNextMedia(count: urls.count)
+                    }
+                    .opacity(urls.count > 1 ? 1 : 0)
+                }
+                .padding(.horizontal, 28)
+
+                VStack {
+                    HStack {
+                        Text("\(activeMediaIndex + 1) / \(urls.count)")
+                            .font(.caption.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.76))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.black.opacity(0.44), in: Capsule())
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(24)
+            }
+            .transition(.opacity)
+            .zIndex(8)
+        }
+    }
+
+    private func mediaArrow(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.title2.bold())
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.48), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(.white.opacity(0.12))
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func closeMediaOverlay() {
+        withAnimation(.easeInOut(duration: 0.14)) {
+            activeMediaIndex = nil
+        }
+    }
+
+    private func showPreviousMedia(count: Int) {
+        guard count > 0 else { return }
+        withAnimation(.easeInOut(duration: 0.12)) {
+            activeMediaIndex = ((activeMediaIndex ?? 0) - 1 + count) % count
+        }
+    }
+
+    private func showNextMedia(count: Int) {
+        guard count > 0 else { return }
+        withAnimation(.easeInOut(duration: 0.12)) {
+            activeMediaIndex = ((activeMediaIndex ?? 0) + 1) % count
         }
     }
 
@@ -2018,14 +2377,12 @@ private struct LibraryGameDetailSheet: View {
                     .padding(.leading, 8)
                 Spacer()
                 HStack(spacing: 8) {
-                    ForEach(MetadataProviderKind.allCases) { provider in
-                        Button {
-                            manualMatchProvider = provider
-                        } label: {
-                            Label(provider.title, systemImage: game.hasMetadata(from: provider) ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        }
-                        .tint(game.hasMetadata(from: provider) ? .green : .red)
+                    Button {
+                        manualMatchProvider = .theGamesDB
+                    } label: {
+                        Label(MetadataProviderKind.theGamesDB.title, systemImage: game.hasMetadata(from: .theGamesDB) ? "checkmark.circle.fill" : "xmark.circle.fill")
                     }
+                    .tint(game.hasMetadata(from: .theGamesDB) ? .green : .red)
                 }
                 Button(action: close) {
                     Label("Close", systemImage: "xmark")
@@ -2061,15 +2418,13 @@ private struct LibraryGameDetailSheet: View {
                                     Text("Use Manual Match to pick the correct Nintendo Switch entry and save artwork/details for this game.")
                                         .foregroundStyle(.secondary)
                                     HStack {
-                                        ForEach(MetadataProviderKind.allCases) { provider in
-                                            Button {
-                                                manualMatchProvider = provider
-                                            } label: {
-                                                Label(provider.matchTitle, systemImage: game.hasMetadata(from: provider) ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                            }
-                                            .buttonStyle(.borderedProminent)
-                                            .tint(game.hasMetadata(from: provider) ? .green : .red)
+                                        Button {
+                                            manualMatchProvider = .theGamesDB
+                                        } label: {
+                                            Label(MetadataProviderKind.theGamesDB.matchTitle, systemImage: game.hasMetadata(from: .theGamesDB) ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         }
+                                        .buttonStyle(.borderedProminent)
+                                        .tint(game.hasMetadata(from: .theGamesDB) ? .green : .red)
                                     }
                                 }
                                 .font(.body)
@@ -2507,13 +2862,77 @@ private struct ManualMetadataMatchSheet: View {
     }
 }
 
+private struct TitleArtworkEditorSheet: View {
+    let gameTitle: String
+    @Binding var imageURLString: String
+    let errorMessage: String
+    let onSaveURL: () -> Void
+    let onChooseLocal: () -> Void
+    let onClear: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Title Artwork")
+                        .font(.title2.bold())
+                    Text("Use your own logo/title image for \(gameTitle).")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button("Close", action: onCancel)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Image URL")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                TextField("https://example.com/title-art.png", text: $imageURLString)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(onSaveURL)
+            }
+
+            if !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    onChooseLocal()
+                } label: {
+                    Label("Choose Local Image", systemImage: "photo")
+                }
+
+                Button {
+                    onClear()
+                } label: {
+                    Label("Clear Custom Image", systemImage: "xmark.circle")
+                }
+
+                Spacer()
+
+                Button("Save URL", action: onSaveURL)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(imageURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .controlSize(.regular)
+        }
+        .padding(22)
+        .frame(width: 560)
+    }
+}
+
 private struct MetadataSettingsSheet: View {
     @EnvironmentObject private var model: SwitchLoaderModel
-    @Binding var apiKey: String
-    @Binding var screenScraperCredentials: ScreenScraperCredentials
+    @Binding var credentials: IGDBCredentials
     @State private var activeMetadataTest: MetadataProviderTest?
     @State private var testResult: MetadataTestResult?
-    @State private var isShowingScreenScraperAdvanced = false
     let onSave: () -> Void
     let onCancel: () -> Void
 
@@ -2522,60 +2941,24 @@ private struct MetadataSettingsSheet: View {
             Text("Metadata Artwork")
                 .font(.title2.bold())
 
-            Text("Add TheGamesDB or ScreenScraper details to fetch cleaner artwork, fanart, summaries, and game details for your library. Saved credentials stay in SwitchLoader's local settings file.")
+            Text("Add your IGDB Twitch Developer Client ID and Client Secret to fetch artwork, fanart, summaries, trailers, and game details for your library. SwitchLoader rate-limits IGDB requests automatically.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            GroupBox("TheGamesDB") {
+            GroupBox("IGDB") {
                 VStack(alignment: .leading, spacing: 10) {
-                    SecureField("API key", text: $apiKey)
+                    TextField("Client ID", text: $credentials.clientID)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("Client Secret", text: $credentials.clientSecret)
                         .textFieldStyle(.roundedBorder)
 
                     Button {
-                        testTheGamesDB()
+                        testIGDB()
                     } label: {
-                        Label(activeMetadataTest == .theGamesDB ? "Testing" : "Test TheGamesDB", systemImage: "checkmark.circle")
+                        Label(activeMetadataTest == .igdb ? "Testing" : "Test IGDB", systemImage: "checkmark.circle")
                     }
                     .disabled(activeMetadataTest != nil)
-                }
-                .padding(.top, 4)
-            }
-
-            GroupBox("ScreenScraper") {
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("Username", text: $screenScraperCredentials.memberUsername)
-                        .textFieldStyle(.roundedBorder)
-                    SecureField("Password", text: $screenScraperCredentials.memberPassword)
-                        .textFieldStyle(.roundedBorder)
-                    Text("Use your ScreenScraper account password here. If the test says user identifiers failed, try the Password shown on your ScreenScraper account/API page, not the Debug Password.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Button {
-                        testScreenScraper()
-                    } label: {
-                        Label(activeMetadataTest == .screenScraper ? "Testing" : "Test ScreenScraper", systemImage: "checkmark.circle")
-                    }
-                    .disabled(activeMetadataTest != nil)
-
-                    DisclosureGroup("Advanced app credentials", isExpanded: $isShowingScreenScraperAdvanced) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Most apps hide these because they ship with their own ScreenScraper app credentials. SwitchLoader keeps them in its local settings file for this development build.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            TextField("Dev username", text: $screenScraperCredentials.devUsername)
-                                .textFieldStyle(.roundedBorder)
-                            SecureField("Debug password", text: $screenScraperCredentials.debugPassword)
-                                .textFieldStyle(.roundedBorder)
-                            TextField("Software name", text: $screenScraperCredentials.softwareName)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        .padding(.top, 8)
-                    }
                 }
                 .padding(.top, 4)
             }
@@ -2583,15 +2966,8 @@ private struct MetadataSettingsSheet: View {
             HStack {
                 Button("Cancel", action: onCancel)
                 Spacer()
-                Button("Clear All") {
-                    apiKey = ""
-                    screenScraperCredentials = ScreenScraperCredentials(
-                        devUsername: "",
-                        debugPassword: "",
-                        softwareName: "SwitchLoader",
-                        memberUsername: "",
-                        memberPassword: ""
-                    )
+                Button("Clear") {
+                    credentials = IGDBCredentials(clientID: "", clientSecret: "")
                     onSave()
                 }
                 Button("Save") {
@@ -2610,46 +2986,28 @@ private struct MetadataSettingsSheet: View {
         }
     }
 
-    private func testTheGamesDB() {
-        activeMetadataTest = .theGamesDB
+    private func testIGDB() {
+        activeMetadataTest = .igdb
         Task {
             do {
-                let message = try await model.testTheGamesDBAPIKey(apiKey)
+                let message = try await model.testIGDBCredentials(credentials)
                 await MainActor.run {
-                    testResult = MetadataTestResult(title: "TheGamesDB Test Passed", message: message)
+                    testResult = MetadataTestResult(title: "IGDB Test Passed", message: message)
                     activeMetadataTest = nil
                 }
             } catch {
                 await MainActor.run {
-                    testResult = MetadataTestResult(title: "TheGamesDB Test Failed", message: error.localizedDescription)
+                    testResult = MetadataTestResult(title: "IGDB Test Failed", message: error.localizedDescription)
                     activeMetadataTest = nil
                 }
             }
         }
     }
 
-    private func testScreenScraper() {
-        activeMetadataTest = .screenScraper
-        Task {
-            do {
-                let message = try await model.testScreenScraperCredentials(screenScraperCredentials)
-                await MainActor.run {
-                    testResult = MetadataTestResult(title: "ScreenScraper Test Passed", message: message)
-                    activeMetadataTest = nil
-                }
-            } catch {
-                await MainActor.run {
-                    testResult = MetadataTestResult(title: "ScreenScraper Test Failed", message: error.localizedDescription)
-                    activeMetadataTest = nil
-                }
-            }
-        }
-    }
 }
 
 private enum MetadataProviderTest {
-    case theGamesDB
-    case screenScraper
+    case igdb
 }
 
 private struct MetadataTestResult: Identifiable {
@@ -2772,6 +3130,36 @@ private struct StatusBadge: View {
             .green
         case .failed:
             .red
+        }
+    }
+}
+
+private struct LibraryArtworkImage<Placeholder: View>: View {
+    let url: URL
+    let contentMode: ContentMode
+    let placeholder: Placeholder
+
+    init(url: URL, contentMode: ContentMode, @ViewBuilder placeholder: () -> Placeholder) {
+        self.url = url
+        self.contentMode = contentMode
+        self.placeholder = placeholder()
+    }
+
+    var body: some View {
+        if url.isFileURL, let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: contentMode)
+        } else {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: contentMode)
+                } else {
+                    placeholder
+                }
+            }
         }
     }
 }

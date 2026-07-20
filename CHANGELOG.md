@@ -34,11 +34,11 @@
 - Xcode archive builds now target Apple Silicon so the bundled Homebrew libusb library links during Product > Archive.
 - Corrected the largest app icon size to the macOS archive-required 1024px asset.
 - README and app version metadata now reflect the RCM-capable `v1.1.0` release.
-- Library now groups install files into game cards, stores the library folder as a security-scoped bookmark, fetches TGDB artwork/details, and shows a rich game detail sheet with install-order queue actions.
-- Library metadata lookups now cache successful matches, missed matches, and failed attempts so TGDB is only called for newly discovered games.
+- Library now groups install files into game cards, stores the library folder as a security-scoped bookmark, fetches IGDB artwork/details, and shows a rich game detail sheet with install-order queue actions.
+- Library metadata lookups now cache successful matches, missed matches, and failed attempts so IGDB is only called for newly discovered games.
 - Library games now display as a rounded cover-poster carousel with horizontal scrolling, vertical wheel support, and a clean grey scrollbar.
-- TGDB library metadata now filters for Nintendo Switch platform matches only, preventing other console covers from being cached or displayed.
-- Game detail popups are larger and richer, with extra TGDB details, media, local file sections, English metadata hints, and manual matching for unmatched games.
+- IGDB library metadata now filters for Nintendo Switch platform matches only, preventing other console covers from being cached or displayed.
+- Game detail popups are larger and richer, with extra IGDB details, media, local file sections, English metadata hints, and manual matching for unmatched games.
 - Library carousel posters are slightly smaller and the visible scrollbar has been removed for a cleaner shelf layout.
 - Homebrew tab with a 50-entry GitHub starter catalog, saved HomebrewApps archive folder, ready/downloaded indicators, multi-select downloads, custom GitHub repo entries, and generated ready-to-copy homebrew folders.
 - SwitchLoader Receiver native `.nro` for installing generated Homebrew folders over USB into SD card homebrew paths.
@@ -48,14 +48,19 @@
 - Quick Library game picker next to the tab selector for jumping directly to a game without stepping through the carousel one by one.
 - Library file rows now show per-file sizes.
 - Library metadata progress bar and status text while provider lookups are running.
-- ScreenScraper metadata provider support alongside TheGamesDB, including richer artwork fields such as fanart/backdrops, clear/logo artwork, banners, screenshots, summaries, genres, developers, publishers, and trailer links.
-- Separate TGDB and ScreenScraper manual matching flows, with red X/green tick provider pills showing whether each source has a saved match.
-- Metadata cache now stores provider matches separately and combines the best available fields from TGDB and ScreenScraper for display.
-- Automatic library refresh now checks for missing artwork/details and fetches incomplete provider metadata where possible.
-- ScreenScraper searches now cache the Nintendo Switch system id, try numeric fallbacks for roman numeral titles, and report friendlier timeout messages.
+- ScreenScraper clearlogo enrichment can run quietly in the background from saved local credentials, while IGDB remains the visible metadata source for displayed titles, details, artwork, trailers, and database links.
+- IGDB manual matching now stays focused on a single red/green IGDB pill instead of exposing separate ScreenScraper matching controls.
+- Metadata cache can keep provider matches separately, but display merging now preserves IGDB data and only fills a missing logo from ScreenScraper.
+- Library launch and Refresh now perform a quick local/cache scan only; provider calls happen from the explicit Fetch New Art action.
+- ScreenScraper searches cache the Nintendo Switch system id, try numeric fallbacks for roman numeral titles, and report friendlier timeout messages for the background logo path.
 - Embedded YouTube trailer popup for games with trailer metadata.
 - Metadata provider credentials moved out of macOS Keychain and into a local SwitchLoader settings file under Application Support to avoid repeated Keychain password prompts.
 - Metadata settings now include provider test buttons with modal success/error results.
+- IGDB metadata provider replaces TheGamesDB and uses Twitch Developer Client ID/Client Secret credentials with cached OAuth tokens.
+- IGDB API requests are throttled to the documented 4 requests per second and 8 open requests limit.
+- Featured Library title/logo artwork is now clickable, with a popup for pasting an image URL, choosing a local Mac image, or clearing the custom override.
+- Local custom title artwork is copied into SwitchLoader's Application Support folder and layered over cached provider metadata without losing the saved IGDB match.
+- The macOS app now opens at a wider, taller default size with a revised Library panel layout and restored bottom media artwork strip.
 
 ### Tests
 

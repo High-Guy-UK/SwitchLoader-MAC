@@ -22,7 +22,7 @@ enum LibraryContentType: Hashable, Sendable {
 }
 
 enum MetadataProviderKind: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
-    case theGamesDB = "TheGamesDB"
+    case theGamesDB = "IGDB"
     case screenScraper = "ScreenScraper"
 
     var id: String { rawValue }
@@ -30,7 +30,7 @@ enum MetadataProviderKind: String, CaseIterable, Identifiable, Codable, Hashable
     var title: String {
         switch self {
         case .theGamesDB:
-            return "TGDB"
+            return "IGDB"
         case .screenScraper:
             return "ScreenScraper"
         }
@@ -39,7 +39,7 @@ enum MetadataProviderKind: String, CaseIterable, Identifiable, Codable, Hashable
     var matchTitle: String {
         switch self {
         case .theGamesDB:
-            return "Fix TGDB Match"
+            return "Fix IGDB Match"
         case .screenScraper:
             return "Fix ScreenScraper Match"
         }
@@ -111,7 +111,8 @@ struct LibraryGame: Identifiable, Hashable, Sendable {
 
         switch provider {
         case .theGamesDB:
-            return metadata.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+            return metadata.lookupPlatformID == IGDBMetadataProvider.nintendoSwitchPlatformID
+                || metadata.provider == "TheGamesDB"
         case .screenScraper:
             return metadata.providerID.contains(":")
                 || metadata.provider.localizedCaseInsensitiveContains("ScreenScraper")
@@ -141,8 +142,11 @@ struct GameMetadata: Codable, Hashable, Sendable {
     let screenshotImageURLs: [URL]
 
     var lookupPlatformID: Int? {
+        if provider == "IGDB" {
+            return IGDBMetadataProvider.nintendoSwitchPlatformID
+        }
         if provider == "TheGamesDB" {
-            return TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+            return 4971
         }
         if provider == "ScreenScraper" {
             return providerID.split(separator: ":").last.flatMap { Int($0) }
@@ -183,6 +187,54 @@ struct GameMetadata: Codable, Hashable, Sendable {
             coverImageURL: coverImageURL ?? fallback.coverImageURL,
             logoImageURL: logoImageURL ?? fallback.logoImageURL,
             screenshotImageURLs: mergedURLs(screenshotImageURLs, fallback.screenshotImageURLs)
+        )
+    }
+
+    func fillingMissingLogo(from fallback: GameMetadata) -> GameMetadata {
+        GameMetadata(
+            provider: provider,
+            providerID: providerID,
+            matchedTitle: matchedTitle,
+            summary: summary,
+            releaseDate: releaseDate,
+            platformName: platformName,
+            rating: rating,
+            players: players,
+            coop: coop,
+            youtubeURL: youtubeURL,
+            aliases: aliases,
+            genres: genres,
+            developers: developers,
+            publishers: publishers,
+            bannerImageURL: bannerImageURL,
+            artworkImageURL: artworkImageURL,
+            coverImageURL: coverImageURL,
+            logoImageURL: logoImageURL ?? fallback.logoImageURL,
+            screenshotImageURLs: screenshotImageURLs
+        )
+    }
+
+    func replacingLogoImageURL(_ logoImageURL: URL?) -> GameMetadata {
+        GameMetadata(
+            provider: provider,
+            providerID: providerID,
+            matchedTitle: matchedTitle,
+            summary: summary,
+            releaseDate: releaseDate,
+            platformName: platformName,
+            rating: rating,
+            players: players,
+            coop: coop,
+            youtubeURL: youtubeURL,
+            aliases: aliases,
+            genres: genres,
+            developers: developers,
+            publishers: publishers,
+            bannerImageURL: bannerImageURL,
+            artworkImageURL: artworkImageURL,
+            coverImageURL: coverImageURL,
+            logoImageURL: logoImageURL,
+            screenshotImageURLs: screenshotImageURLs
         )
     }
 
@@ -254,8 +306,19 @@ struct ScreenScraperCredentials: Codable, Hashable, Sendable {
     }
 }
 
+struct IGDBCredentials: Codable, Hashable, Sendable {
+    var clientID: String
+    var clientSecret: String
+
+    var isComplete: Bool {
+        !clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !clientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 private struct MetadataProviderCredentials: Codable, Sendable {
     var theGamesDBAPIKey: String?
+    var igdbCredentials: IGDBCredentials?
     var screenScraperCredentials: ScreenScraperCredentials?
 }
 
@@ -437,8 +500,8 @@ final class SwitchLoaderModel: ObservableObject {
     @Published var metadataProgress = 0.0
     @Published var metadataStatusDetail = ""
     @Published var libraryMessage = "Choose your NSP/XCI folder to build the library."
-    @Published var metadataMessage = "Add a TGDB API key to fetch artwork and game details."
-    @Published var hasTheGamesDBAPIKey = false
+    @Published var metadataMessage = "Add IGDB credentials to fetch artwork and game details."
+    @Published var hasIGDBCredentials = false
     @Published var hasScreenScraperCredentials = false
     @Published var currentInstruction = "Choose XCI, NSP, NSZ, or a split folder to install."
     @Published var selectedPayloadURL: URL?
@@ -462,8 +525,10 @@ final class SwitchLoaderModel: ObservableObject {
     private nonisolated static let homebrewArchiveDirectoryBookmarkDefaultsKey = "SwitchLoader.homebrewArchiveDirectoryBookmark"
     private nonisolated static let customHomebrewEntriesDefaultsKey = "SwitchLoader.customHomebrewEntries"
     private nonisolated static let rcmPayloadDirectoryDefaultsKey = "SwitchLoader.rcmPayloadDirectory"
+    private nonisolated static let customArtworkProviderKey = "CustomArtwork"
     private var rcmMonitorTask: Task<Void, Never>?
-    private var cachedTheGamesDBAPIKey: String?
+    private var screenScraperLogoTask: Task<Void, Never>?
+    private var cachedIGDBCredentials: IGDBCredentials?
     private var cachedScreenScraperCredentials: ScreenScraperCredentials?
     private var suppressNextRCMDisconnectLog = false
     private nonisolated static let libraryFileExtensions: Set<String> = ["nsp", "nsz", "xci", "xcz"]
@@ -494,11 +559,11 @@ final class SwitchLoaderModel: ObservableObject {
             refreshHomebrewArchiveStatus()
         }
 
-        cachedTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()
+        cachedIGDBCredentials = Self.loadIGDBCredentials()
         cachedScreenScraperCredentials = Self.loadScreenScraperCredentials()
-        hasTheGamesDBAPIKey = cachedTheGamesDBAPIKey?.isEmpty == false
+        hasIGDBCredentials = cachedIGDBCredentials?.isComplete == true
         hasScreenScraperCredentials = cachedScreenScraperCredentials?.isComplete == true
-        metadataMessage = hasAnyMetadataProvider ? "Metadata ready." : "Add a metadata account to fetch artwork and game details."
+        metadataMessage = hasAnyMetadataProvider ? "Metadata ready." : "Add IGDB credentials to fetch artwork and game details."
         startRCMMonitor()
 
         if libraryDirectory != nil {
@@ -508,6 +573,7 @@ final class SwitchLoaderModel: ObservableObject {
 
     deinit {
         rcmMonitorTask?.cancel()
+        screenScraperLogoTask?.cancel()
     }
 
     var canStartUSBInstall: Bool {
@@ -527,7 +593,7 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     var hasAnyMetadataProvider: Bool {
-        hasTheGamesDBAPIKey || hasScreenScraperCredentials
+        hasIGDBCredentials
     }
 
     var homebrewCatalog: [HomebrewCatalogEntry] {
@@ -707,7 +773,7 @@ final class SwitchLoaderModel: ObservableObject {
         scanLibrary()
     }
 
-    func scanLibrary() {
+    func scanLibrary(fetchMissingMetadata: Bool = false) {
         guard let libraryDirectory else {
             libraryItems = []
             libraryGames = []
@@ -721,9 +787,8 @@ final class SwitchLoaderModel: ObservableObject {
         metadataProgress = 0
         metadataStatusDetail = ""
         libraryMessage = "Scanning library..."
-        let apiKey = cachedTheGamesDBAPIKey
-        let screenScraperCredentials = cachedScreenScraperCredentials
-        let hasMetadataProvider = apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true
+        let igdbCredentials = cachedIGDBCredentials
+        let hasMetadataProvider = igdbCredentials?.isComplete == true
 
         Task.detached(priority: .userInitiated) { [libraryDirectory] in
             do {
@@ -731,31 +796,43 @@ final class SwitchLoaderModel: ObservableObject {
                 let cache = Self.loadMetadataCache()
                 let games = Self.groupLibraryGames(from: items, cache: cache)
                 let enrichedCount = games.filter { $0.metadata != nil }.count
-                let gamesNeedingMetadata = games.filter {
+                let gamesNeedingMetadata = fetchMissingMetadata ? games.filter {
                     Self.needsMetadataRefresh(
                         cache[$0.id],
-                        hasTheGamesDB: apiKey?.isEmpty == false,
-                        hasScreenScraper: screenScraperCredentials?.isComplete == true
+                        hasIGDB: igdbCredentials?.isComplete == true
                     )
-                }
+                } : []
                 await MainActor.run {
                     self.libraryItems = items
                     self.libraryGames = games
                     self.isScanningLibrary = false
                     self.libraryMessage = items.isEmpty ? "No install files found in this folder." : "Found \(games.count) game\(games.count == 1 ? "" : "s") and \(items.count) install item\(items.count == 1 ? "" : "s")."
-                    if games.isEmpty {
-                        self.metadataMessage = hasMetadataProvider ? "No games to enrich yet." : "Add a metadata account to fetch artwork and game details."
+                    if !fetchMissingMetadata {
+                        if enrichedCount == 0 {
+                            self.metadataMessage = hasMetadataProvider ? "Library scanned from local files. Use Fetch New Art when you want IGDB artwork/details." : "Add IGDB credentials to fetch artwork and game details."
+                        } else {
+                            self.metadataMessage = "Artwork/details loaded from cache for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s"). No database calls needed."
+                        }
+                    } else if games.isEmpty {
+                        self.metadataMessage = hasMetadataProvider ? "No games to enrich yet." : "Add IGDB credentials to fetch artwork and game details."
                     } else if gamesNeedingMetadata.isEmpty {
                         self.metadataMessage = enrichedCount == 0 ? "Metadata cache is up to date. No database calls needed." : "Artwork/details loaded from cache for \(enrichedCount) game\(enrichedCount == 1 ? "" : "s"). No database calls needed."
                     } else if hasMetadataProvider {
-                        self.metadataMessage = "\(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s") need richer metadata."
+                        self.metadataMessage = "\(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s") need IGDB metadata."
                     } else {
-                        self.metadataMessage = "Add a metadata account to fetch artwork for \(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s")."
+                        self.metadataMessage = "Add IGDB credentials to fetch artwork for \(gamesNeedingMetadata.count) game\(gamesNeedingMetadata.count == 1 ? "" : "s")."
                     }
                     self.appendLog("Library scan found \(games.count) game\(games.count == 1 ? "" : "s").", .success)
                 }
 
-                guard hasMetadataProvider, !gamesNeedingMetadata.isEmpty else { return }
+                guard fetchMissingMetadata, hasMetadataProvider else { return }
+
+                guard !gamesNeedingMetadata.isEmpty else {
+                    await MainActor.run {
+                        self.startScreenScraperLogoEnrichmentIfNeeded(for: games)
+                    }
+                    return
+                }
 
                 await MainActor.run {
                     self.isFetchingMetadata = true
@@ -777,8 +854,8 @@ final class SwitchLoaderModel: ObservableObject {
                     do {
                         let sourceMetadata = try await Self.metadataSources(
                             for: game.title,
-                            theGamesDBAPIKey: apiKey,
-                            screenScraperCredentials: screenScraperCredentials
+                            igdbCredentials: igdbCredentials,
+                            screenScraperCredentials: nil
                         )
                         if let metadata = Self.combinedMetadata(from: sourceMetadata) {
                             updatedCache[game.id] = GameMetadataCacheEntry(
@@ -856,6 +933,7 @@ final class SwitchLoaderModel: ObservableObject {
                         self.metadataStatusDetail = "Metadata scan complete."
                         self.metadataMessage = detail
                     }
+                    self.startScreenScraperLogoEnrichmentIfNeeded(for: self.libraryGames)
                 }
             } catch {
                 await MainActor.run {
@@ -894,13 +972,16 @@ final class SwitchLoaderModel: ObservableObject {
         }
     }
 
-    func saveTheGamesDBAPIKey(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        Self.saveTheGamesDBAPIKey(trimmed.isEmpty ? nil : trimmed)
-        cachedTheGamesDBAPIKey = trimmed.isEmpty ? nil : trimmed
-        hasTheGamesDBAPIKey = !trimmed.isEmpty
-        metadataMessage = hasAnyMetadataProvider ? "Metadata settings saved. Only new, uncached games will call databases." : "Add a metadata account to fetch artwork and game details."
-        appendLog(hasTheGamesDBAPIKey ? "TGDB API key saved." : "TGDB API key cleared.", .info)
+    func saveIGDBCredentials(_ credentials: IGDBCredentials) {
+        let trimmed = IGDBCredentials(
+            clientID: credentials.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            clientSecret: credentials.clientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        Self.saveIGDBCredentials(trimmed.isComplete ? trimmed : nil)
+        cachedIGDBCredentials = trimmed.isComplete ? trimmed : nil
+        hasIGDBCredentials = trimmed.isComplete
+        metadataMessage = hasAnyMetadataProvider ? "Metadata settings saved. Only new, uncached games will call IGDB." : "Add IGDB credentials to fetch artwork and game details."
+        appendLog(hasIGDBCredentials ? "IGDB credentials saved." : "IGDB credentials cleared.", .info)
     }
 
     func saveScreenScraperCredentials(_ credentials: ScreenScraperCredentials) {
@@ -932,21 +1013,24 @@ final class SwitchLoaderModel: ObservableObject {
         )
     }
 
-    func loadTheGamesDBAPIKeyForEditing() -> String {
-        if cachedTheGamesDBAPIKey == nil {
-            cachedTheGamesDBAPIKey = Self.loadTheGamesDBAPIKey()
-            hasTheGamesDBAPIKey = cachedTheGamesDBAPIKey?.isEmpty == false
+    func loadIGDBCredentialsForEditing() -> IGDBCredentials {
+        if cachedIGDBCredentials == nil {
+            cachedIGDBCredentials = Self.loadIGDBCredentials()
+            hasIGDBCredentials = cachedIGDBCredentials?.isComplete == true
         }
-        return cachedTheGamesDBAPIKey ?? ""
+        return cachedIGDBCredentials ?? IGDBCredentials(clientID: "", clientSecret: "")
     }
 
-    func testTheGamesDBAPIKey(_ key: String) async throws -> String {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw MetadataLookupError.providerRejected("Enter a TheGamesDB API key first.")
+    func testIGDBCredentials(_ credentials: IGDBCredentials) async throws -> String {
+        let trimmed = IGDBCredentials(
+            clientID: credentials.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            clientSecret: credentials.clientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        guard trimmed.isComplete else {
+            throw MetadataLookupError.providerRejected("Enter your IGDB Client ID and Client Secret first.")
         }
 
-        let result = try await TheGamesDBMetadataProvider(apiKey: trimmed).testConnection()
+        let result = try await IGDBMetadataProvider(credentials: trimmed).testConnection()
         return result
     }
 
@@ -966,55 +1050,113 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     func refreshLibraryMetadata() {
-        scanLibrary()
+        scanLibrary(fetchMissingMetadata: true)
+    }
+
+    private func startScreenScraperLogoEnrichmentIfNeeded(for games: [LibraryGame]) {
+        guard let credentials = cachedScreenScraperCredentials, credentials.isComplete else { return }
+        let candidates = Array(games.filter { game in
+            guard let metadata = game.metadata, metadata.provider == MetadataProviderKind.theGamesDB.rawValue else {
+                return false
+            }
+            return metadata.logoImageURL == nil
+        }.prefix(24))
+        guard !candidates.isEmpty else { return }
+
+        screenScraperLogoTask?.cancel()
+        screenScraperLogoTask = Task.detached(priority: .background) {
+            var cache = Self.loadMetadataCache()
+            var updatedGames: [(id: String, metadata: GameMetadata, sourceMetadata: [String: GameMetadata])] = []
+
+            for game in candidates {
+                guard !Task.isCancelled else { return }
+                do {
+                    guard let screenScraperMetadata = try await ScreenScraperMetadataProvider(credentials: credentials).metadata(for: game.title),
+                          screenScraperMetadata.logoImageURL != nil
+                    else {
+                        continue
+                    }
+
+                    var sourceMetadata = cache[game.id]?.availableSourceMetadata ?? game.sourceMetadata
+                    sourceMetadata[MetadataProviderKind.screenScraper.rawValue] = screenScraperMetadata
+                    guard let combinedMetadata = Self.combinedMetadata(from: sourceMetadata) else { continue }
+
+                    cache[game.id] = GameMetadataCacheEntry(
+                        title: game.title,
+                        provider: combinedMetadata.provider,
+                        state: .success,
+                        attemptedAt: Date(),
+                        lookupPlatformID: combinedMetadata.lookupPlatformID,
+                        metadata: combinedMetadata,
+                        sourceMetadata: sourceMetadata,
+                        message: "ScreenScraper clearlogo enriched in the background."
+                    )
+                    updatedGames.append((game.id, combinedMetadata, sourceMetadata))
+                    try? Self.saveMetadataCache(cache)
+                } catch {
+                    continue
+                }
+            }
+
+            guard !Task.isCancelled, !updatedGames.isEmpty else { return }
+            await MainActor.run {
+                for update in updatedGames {
+                    if let index = self.libraryGames.firstIndex(where: { $0.id == update.id }) {
+                        self.libraryGames[index].metadata = update.metadata
+                        self.libraryGames[index].sourceMetadata = update.sourceMetadata
+                    }
+                }
+                self.metadataMessage = "IGDB metadata is cached. ScreenScraper added clearlogos for \(updatedGames.count) game\(updatedGames.count == 1 ? "" : "s") in the background."
+            }
+        }
     }
 
     func searchMetadataMatches(for query: String) async throws -> [GameMetadataMatch] {
-        let apiKey = cachedTheGamesDBAPIKey
+        let igdbCredentials = cachedIGDBCredentials
         let screenScraperCredentials = cachedScreenScraperCredentials
-        guard apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true else {
+        guard igdbCredentials?.isComplete == true || screenScraperCredentials?.isComplete == true else {
             throw MetadataLookupError.missingAPIKey
         }
 
         return try await Self.matches(
             for: query,
-            theGamesDBAPIKey: apiKey,
+            igdbCredentials: igdbCredentials,
             screenScraperCredentials: screenScraperCredentials
         )
     }
 
     func searchMetadataMatches(for query: String, provider: MetadataProviderKind) async throws -> [GameMetadataMatch] {
-        let apiKey = cachedTheGamesDBAPIKey
+        let igdbCredentials = cachedIGDBCredentials
         let screenScraperCredentials = cachedScreenScraperCredentials
 
         switch provider {
         case .theGamesDB:
-            guard apiKey?.isEmpty == false else { throw MetadataLookupError.missingAPIKey }
+            guard igdbCredentials?.isComplete == true else { throw MetadataLookupError.missingAPIKey }
             return try await Self.matches(
                 for: query,
-                theGamesDBAPIKey: apiKey,
+                igdbCredentials: igdbCredentials,
                 screenScraperCredentials: nil
             )
         case .screenScraper:
             guard screenScraperCredentials?.isComplete == true else { throw MetadataLookupError.missingAPIKey }
             return try await Self.matches(
                 for: query,
-                theGamesDBAPIKey: nil,
+                igdbCredentials: nil,
                 screenScraperCredentials: screenScraperCredentials
             )
         }
     }
 
     func applyMetadataMatch(_ match: GameMetadataMatch, to game: LibraryGame) async throws {
-        let apiKey = cachedTheGamesDBAPIKey
+        let igdbCredentials = cachedIGDBCredentials
         let screenScraperCredentials = cachedScreenScraperCredentials
-        guard apiKey?.isEmpty == false || screenScraperCredentials?.isComplete == true else {
+        guard igdbCredentials?.isComplete == true || screenScraperCredentials?.isComplete == true else {
             throw MetadataLookupError.missingAPIKey
         }
 
         let metadata = try await Self.metadata(
             for: match,
-            theGamesDBAPIKey: apiKey,
+            igdbCredentials: igdbCredentials,
             screenScraperCredentials: screenScraperCredentials
         )
         var cache = Self.loadMetadataCache()
@@ -1032,18 +1174,19 @@ final class SwitchLoaderModel: ObservableObject {
 
         if let index = libraryGames.firstIndex(where: { $0.id == game.id }) {
             libraryGames[index].metadata = metadata
+            libraryGames[index].sourceMetadata = [metadata.provider: metadata]
         }
         metadataMessage = "Manual match saved for \(game.title)."
         appendLog("Manual \(metadata.provider) match saved for \(game.title).", .success)
     }
 
     func applyMetadataMatch(_ match: GameMetadataMatch, to game: LibraryGame, provider: MetadataProviderKind) async throws {
-        let apiKey = cachedTheGamesDBAPIKey
+        let igdbCredentials = cachedIGDBCredentials
         let screenScraperCredentials = cachedScreenScraperCredentials
 
         let matchedMetadata = try await Self.metadata(
             for: match,
-            theGamesDBAPIKey: provider == .theGamesDB ? apiKey : nil,
+            igdbCredentials: provider == .theGamesDB ? igdbCredentials : nil,
             screenScraperCredentials: provider == .screenScraper ? screenScraperCredentials : nil
         )
 
@@ -1070,6 +1213,64 @@ final class SwitchLoaderModel: ObservableObject {
         }
         metadataMessage = "\(provider.title) match saved for \(game.title)."
         appendLog("Manual \(provider.title) match saved for \(game.title).", .success)
+    }
+
+    func setCustomTitleArtworkURL(_ url: URL, for game: LibraryGame) throws {
+        try updateCustomTitleArtwork(url, for: game, message: "Custom title artwork URL saved.")
+    }
+
+    func setCustomTitleArtworkFile(_ sourceURL: URL, for game: LibraryGame) throws {
+        let didAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let storedURL = try Self.persistCustomTitleArtworkFile(sourceURL, gameID: game.id)
+        try updateCustomTitleArtwork(storedURL, for: game, message: "Custom title artwork file saved.")
+    }
+
+    func clearCustomTitleArtwork(for game: LibraryGame) throws {
+        try updateCustomTitleArtwork(nil, for: game, message: "Custom title artwork cleared.")
+    }
+
+    private func updateCustomTitleArtwork(_ url: URL?, for game: LibraryGame, message: String) throws {
+        var cache = Self.loadMetadataCache()
+        var sourceMetadata = cache[game.id]?.availableSourceMetadata ?? game.sourceMetadata
+
+        let baseSources = sourceMetadata.filter { $0.key != Self.customArtworkProviderKey }
+        let baseMetadata = Self.combinedMetadata(from: baseSources)
+            ?? cache[game.id]?.metadata
+            ?? game.metadata
+            ?? Self.placeholderMetadata(for: game)
+
+        if let url {
+            sourceMetadata[Self.customArtworkProviderKey] = baseMetadata.replacingLogoImageURL(url)
+        } else {
+            sourceMetadata.removeValue(forKey: Self.customArtworkProviderKey)
+        }
+
+        let combinedMetadata = Self.combinedMetadata(from: sourceMetadata) ?? baseMetadata
+        cache[game.id] = GameMetadataCacheEntry(
+            title: game.title,
+            provider: combinedMetadata.provider,
+            state: .success,
+            attemptedAt: Date(),
+            lookupPlatformID: combinedMetadata.lookupPlatformID,
+            metadata: combinedMetadata,
+            sourceMetadata: sourceMetadata,
+            message: message
+        )
+        try Self.saveMetadataCache(cache)
+
+        if let index = libraryGames.firstIndex(where: { $0.id == game.id }) {
+            libraryGames[index].metadata = combinedMetadata
+            libraryGames[index].sourceMetadata = sourceMetadata
+        }
+
+        metadataMessage = "\(message) \(game.title)."
+        appendLog("\(message) \(game.title).", .success)
     }
 
     func setRCMPayload(_ url: URL) {
@@ -1631,14 +1832,42 @@ final class SwitchLoaderModel: ObservableObject {
     }
 
     private nonisolated static func combinedMetadata(from sources: [String: GameMetadata]) -> GameMetadata? {
+        let customArtwork = sources[customArtworkProviderKey]?.logoImageURL
         let screenScraper = sources[MetadataProviderKind.screenScraper.rawValue]
-        let theGamesDB = sources[MetadataProviderKind.theGamesDB.rawValue]
+        let primary = sources[MetadataProviderKind.theGamesDB.rawValue] ?? sources["TheGamesDB"]
+        let combined = primary ?? screenScraper ?? sources.values.first
 
-        if let screenScraper, let theGamesDB {
-            return screenScraper.fillingMissingValues(from: theGamesDB)
+        if let screenScraper, let primary {
+            let metadata = primary.fillingMissingLogo(from: screenScraper)
+            return customArtwork.map { metadata.replacingLogoImageURL($0) } ?? metadata
         }
 
-        return screenScraper ?? theGamesDB ?? sources.values.first
+        guard let combined else { return nil }
+        return customArtwork.map { combined.replacingLogoImageURL($0) } ?? combined
+    }
+
+    private nonisolated static func placeholderMetadata(for game: LibraryGame) -> GameMetadata {
+        GameMetadata(
+            provider: "Metadata",
+            providerID: game.id,
+            matchedTitle: game.title,
+            summary: nil,
+            releaseDate: nil,
+            platformName: "Nintendo Switch",
+            rating: nil,
+            players: nil,
+            coop: nil,
+            youtubeURL: nil,
+            aliases: nil,
+            genres: [],
+            developers: [],
+            publishers: [],
+            bannerImageURL: nil,
+            artworkImageURL: nil,
+            coverImageURL: nil,
+            logoImageURL: nil,
+            screenshotImageURLs: []
+        )
     }
 
     private nonisolated static func stableGameID(for title: String) -> String {
@@ -1651,25 +1880,17 @@ final class SwitchLoaderModel: ObservableObject {
 
     private nonisolated static func metadataSources(
         for title: String,
-        theGamesDBAPIKey: String?,
+        igdbCredentials: IGDBCredentials?,
         screenScraperCredentials: ScreenScraperCredentials?
     ) async throws -> [String: GameMetadata] {
         var sources: [String: GameMetadata] = [:]
         var lastError: Error?
 
-        if let screenScraperCredentials, screenScraperCredentials.isComplete {
-            do {
-                if let metadata = try await ScreenScraperMetadataProvider(credentials: screenScraperCredentials).metadata(for: title) {
-                    sources[MetadataProviderKind.screenScraper.rawValue] = metadata
-                }
-            } catch {
-                lastError = error
-            }
-        }
+        _ = screenScraperCredentials
 
-        if let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty {
+        if let igdbCredentials, igdbCredentials.isComplete {
             do {
-                if let metadata = try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).metadata(for: title) {
+                if let metadata = try await IGDBMetadataProvider(credentials: igdbCredentials).metadata(for: title) {
                     sources[MetadataProviderKind.theGamesDB.rawValue] = metadata
                 }
             } catch {
@@ -1685,12 +1906,12 @@ final class SwitchLoaderModel: ObservableObject {
 
     private nonisolated static func metadata(
         for title: String,
-        theGamesDBAPIKey: String?,
+        igdbCredentials: IGDBCredentials?,
         screenScraperCredentials: ScreenScraperCredentials?
     ) async throws -> GameMetadata? {
         let sources = try await metadataSources(
             for: title,
-            theGamesDBAPIKey: theGamesDBAPIKey,
+            igdbCredentials: igdbCredentials,
             screenScraperCredentials: screenScraperCredentials
         )
         return combinedMetadata(from: sources)
@@ -1698,8 +1919,7 @@ final class SwitchLoaderModel: ObservableObject {
 
     private nonisolated static func needsMetadataRefresh(
         _ entry: GameMetadataCacheEntry?,
-        hasTheGamesDB: Bool,
-        hasScreenScraper: Bool
+        hasIGDB: Bool
     ) -> Bool {
         guard let entry else { return true }
         guard entry.state == .success else {
@@ -1707,22 +1927,19 @@ final class SwitchLoaderModel: ObservableObject {
         }
 
         let sourceMetadata = entry.availableSourceMetadata
-        if hasTheGamesDB, sourceMetadata[MetadataProviderKind.theGamesDB.rawValue] == nil {
-            return true
-        }
-        if hasScreenScraper, sourceMetadata[MetadataProviderKind.screenScraper.rawValue] == nil {
+        if hasIGDB, sourceMetadata[MetadataProviderKind.theGamesDB.rawValue] == nil {
             return true
         }
 
         guard let metadata = combinedMetadata(from: sourceMetadata) ?? entry.metadata else {
             return true
         }
-        return metadata.isMissingRichArtworkOrDetails
+        return metadata.provider != MetadataProviderKind.theGamesDB.rawValue && hasIGDB
     }
 
     private nonisolated static func matches(
         for query: String,
-        theGamesDBAPIKey: String?,
+        igdbCredentials: IGDBCredentials?,
         screenScraperCredentials: ScreenScraperCredentials?
     ) async throws -> [GameMetadataMatch] {
         var matches: [GameMetadataMatch] = []
@@ -1736,9 +1953,9 @@ final class SwitchLoaderModel: ObservableObject {
             }
         }
 
-        if let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty {
+        if let igdbCredentials, igdbCredentials.isComplete {
             do {
-                matches.append(contentsOf: try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).matches(for: query))
+                matches.append(contentsOf: try await IGDBMetadataProvider(credentials: igdbCredentials).matches(for: query))
             } catch {
                 lastError = error
             }
@@ -1759,7 +1976,7 @@ final class SwitchLoaderModel: ObservableObject {
 
     private nonisolated static func metadata(
         for match: GameMetadataMatch,
-        theGamesDBAPIKey: String?,
+        igdbCredentials: IGDBCredentials?,
         screenScraperCredentials: ScreenScraperCredentials?
     ) async throws -> GameMetadata {
         switch match.provider {
@@ -1769,10 +1986,10 @@ final class SwitchLoaderModel: ObservableObject {
             }
             return try await ScreenScraperMetadataProvider(credentials: screenScraperCredentials).metadata(for: match)
         default:
-            guard let theGamesDBAPIKey, !theGamesDBAPIKey.isEmpty else {
+            guard let igdbCredentials, igdbCredentials.isComplete else {
                 throw MetadataLookupError.missingAPIKey
             }
-            return try await TheGamesDBMetadataProvider(apiKey: theGamesDBAPIKey).metadata(for: match)
+            return try await IGDBMetadataProvider(credentials: igdbCredentials).metadata(for: match)
         }
     }
 
@@ -1780,8 +1997,11 @@ final class SwitchLoaderModel: ObservableObject {
         guard let data = try? Data(contentsOf: metadataCacheURL) else { return [:] }
         if let cache = try? JSONDecoder().decode([String: GameMetadataCacheEntry].self, from: data) {
             return cache.filter { _, entry in
+                if entry.provider == "IGDB" {
+                    return entry.lookupPlatformID == IGDBMetadataProvider.nintendoSwitchPlatformID
+                }
                 if entry.provider == "TheGamesDB" {
-                    return entry.lookupPlatformID == TheGamesDBMetadataProvider.nintendoSwitchPlatformID
+                    return entry.lookupPlatformID == 4971
                 }
                 return entry.provider == "ScreenScraper" || entry.provider == "Metadata"
             }
@@ -1797,6 +2017,21 @@ final class SwitchLoaderModel: ObservableObject {
         try data.write(to: url, options: .atomic)
     }
 
+    private nonisolated static func persistCustomTitleArtworkFile(_ sourceURL: URL, gameID: String) throws -> URL {
+        let directory = customArtworkDirectoryURL
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let sourceExtension = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileExtension = sourceExtension.isEmpty ? "png" : sourceExtension.lowercased()
+        let destination = directory.appendingPathComponent("\(stableGameID(for: gameID))-title.\(fileExtension)")
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+        return destination
+    }
+
     private nonisolated static var metadataCacheURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -1805,13 +2040,22 @@ final class SwitchLoaderModel: ObservableObject {
             .appendingPathComponent("LibraryMetadataCache.json")
     }
 
-    private nonisolated static func loadTheGamesDBAPIKey() -> String? {
-        loadMetadataProviderCredentials().theGamesDBAPIKey
+    private nonisolated static var customArtworkDirectoryURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("SwitchLoader", isDirectory: true)
+            .appendingPathComponent("CustomArtwork", isDirectory: true)
     }
 
-    private nonisolated static func saveTheGamesDBAPIKey(_ key: String?) {
+    private nonisolated static func loadIGDBCredentials() -> IGDBCredentials? {
+        let credentials = loadMetadataProviderCredentials().igdbCredentials
+        return credentials?.isComplete == true ? credentials : nil
+    }
+
+    private nonisolated static func saveIGDBCredentials(_ igdbCredentials: IGDBCredentials?) {
         var credentials = loadMetadataProviderCredentials()
-        credentials.theGamesDBAPIKey = key
+        credentials.igdbCredentials = igdbCredentials
         saveMetadataProviderCredentials(credentials)
     }
 
@@ -1830,7 +2074,7 @@ final class SwitchLoaderModel: ObservableObject {
         guard let data = try? Data(contentsOf: metadataProviderCredentialsURL),
               let credentials = try? JSONDecoder().decode(MetadataProviderCredentials.self, from: data)
         else {
-            return MetadataProviderCredentials(theGamesDBAPIKey: nil, screenScraperCredentials: nil)
+            return MetadataProviderCredentials(theGamesDBAPIKey: nil, igdbCredentials: nil, screenScraperCredentials: nil)
         }
         return credentials
     }
@@ -2772,14 +3016,83 @@ private struct ScreenScraperMetadataProvider: Sendable {
     }
 }
 
-private struct TheGamesDBMetadataProvider: Sendable {
-    static let nintendoSwitchPlatformID = 4971
+private actor IGDBRateLimiter {
+    static let shared = IGDBRateLimiter()
 
-    let apiKey: String
+    private var requestDates: [Date] = []
+    private var activeRequests = 0
+
+    func acquire() async {
+        while true {
+            let now = Date()
+            requestDates = requestDates.filter { now.timeIntervalSince($0) < 1 }
+            if requestDates.count < 4, activeRequests < 8 {
+                requestDates.append(now)
+                activeRequests += 1
+                return
+            }
+
+            let oldest = requestDates.first ?? now
+            let delay = max(0.05, 1 - now.timeIntervalSince(oldest))
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+    }
+
+    func release() {
+        activeRequests = max(0, activeRequests - 1)
+    }
+}
+
+private actor IGDBTokenCache {
+    static let shared = IGDBTokenCache()
+
+    private var tokens: [String: (token: String, expiresAt: Date)] = [:]
+
+    func accessToken(for credentials: IGDBCredentials) async throws -> String {
+        let clientID = credentials.clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clientSecret = credentials.clientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cached = tokens[clientID], cached.expiresAt > Date().addingTimeInterval(120) {
+            return cached.token
+        }
+
+        guard var components = URLComponents(string: "https://id.twitch.tv/oauth2/token") else {
+            throw URLError(.badURL)
+        }
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "client_secret", value: clientSecret),
+            URLQueryItem(name: "grant_type", value: "client_credentials")
+        ]
+        guard let url = components.url else { throw URLError(.badURL) }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let message = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw MetadataLookupError.providerRejected("IGDB authentication returned HTTP \(http.statusCode)\(message?.isEmpty == false ? ": \(message!)" : ".")")
+        }
+
+        let object = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard let token = object["access_token"] as? String else {
+            throw MetadataLookupError.providerRejected("IGDB authentication did not return an access token.")
+        }
+        let expiresIn = (object["expires_in"] as? NSNumber)?.doubleValue ?? 3600
+        tokens[clientID] = (token, Date().addingTimeInterval(expiresIn))
+        return token
+    }
+}
+
+private struct IGDBMetadataProvider: Sendable {
+    static let nintendoSwitchPlatformID = 130
+
+    let credentials: IGDBCredentials
 
     func metadata(for title: String) async throws -> GameMetadata? {
         guard let game = try await findGame(named: title) else { return nil }
-        return try await metadata(for: game.match)
+        return game.metadata
     }
 
     func matches(for title: String) async throws -> [GameMetadataMatch] {
@@ -2789,37 +3102,20 @@ private struct TheGamesDBMetadataProvider: Sendable {
     func testConnection() async throws -> String {
         let matches = try await matches(for: "Mario Kart 8 Deluxe")
         if matches.isEmpty {
-            return "Connected to TheGamesDB, but the test lookup returned no Nintendo Switch matches."
+            return "Connected to IGDB, but the test lookup returned no Nintendo Switch matches."
         }
-        return "Connected to TheGamesDB.\nTest lookup found \(matches.count) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
+        return "Connected to IGDB.\nTest lookup found \(matches.count) Nintendo Switch match\(matches.count == 1 ? "" : "es")."
     }
 
     func metadata(for match: GameMetadataMatch) async throws -> GameMetadata {
         guard let gameID = Int(match.providerID) else {
             throw URLError(.badURL)
         }
-        let images = try await loadImages(for: gameID)
-        return GameMetadata(
-            provider: "TheGamesDB",
-            providerID: match.providerID,
-            matchedTitle: match.title,
-            summary: match.summary,
-            releaseDate: match.releaseDate,
-            platformName: match.platformName,
-            rating: match.rating,
-            players: match.players,
-            coop: match.coop,
-            youtubeURL: match.youtubeURL,
-            aliases: match.aliases,
-            genres: match.genres,
-            developers: match.developers,
-            publishers: match.publishers,
-            bannerImageURL: images.preferredURL(types: ["banner", "fanart", "screenshot"]),
-            artworkImageURL: images.preferredURL(types: ["fanart", "screenshot"]),
-            coverImageURL: images.preferredURL(types: ["boxart"]),
-            logoImageURL: images.preferredURL(types: ["clearlogo", "logo"]),
-            screenshotImageURLs: images.urls(types: ["screenshot", "fanart"])
-        )
+        let body = "\(Self.gameFields) where id = \(gameID); limit 1;"
+        guard let game = try await games(body: body).first else {
+            throw MetadataLookupError.providerRejected("IGDB could not reload the selected match.")
+        }
+        return game.metadata
     }
 
     private func findGame(named title: String) async throws -> RemoteGame? {
@@ -2829,71 +3125,59 @@ private struct TheGamesDBMetadataProvider: Sendable {
     }
 
     private func findGames(named title: String) async throws -> [RemoteGame] {
-        guard var components = URLComponents(string: "https://api.thegamesdb.net/v1/Games/ByGameName") else {
-            return []
-        }
-        components.queryItems = [
-            URLQueryItem(name: "apikey", value: apiKey),
-            URLQueryItem(name: "name", value: title),
-            URLQueryItem(name: "fields", value: "overview,genres,developers,publishers,platform,players,coop,rating,youtube,alternates"),
-            URLQueryItem(name: "language", value: "en"),
-            URLQueryItem(name: "lang", value: "en"),
-            URLQueryItem(name: "filter[platform]", value: String(Self.nintendoSwitchPlatformID))
-        ]
-        guard let url = components.url else { return [] }
-
-        let object = try await jsonObject(from: url)
-        guard let data = object["data"] as? [String: Any],
-              let games = data["games"] as? [[String: Any]]
-        else {
-            return []
-        }
-
-        return games
-            .compactMap(RemoteGame.init(dictionary:))
+        let body = """
+        search "\(Self.escaped(title))";
+        \(Self.gameFields)
+        where platforms = (\(Self.nintendoSwitchPlatformID)) & themes != (42);
+        limit 25;
+        """
+        return try await games(body: body)
             .filter(\.isNintendoSwitchRelease)
             .sorted {
                 score($0.name, against: title) > score($1.name, against: title)
             }
     }
 
-    private func loadImages(for gameID: Int) async throws -> RemoteImages {
-        guard var components = URLComponents(string: "https://api.thegamesdb.net/v1/Games/Images") else {
-            return RemoteImages(baseURLs: [:], images: [])
-        }
-        components.queryItems = [
-            URLQueryItem(name: "apikey", value: apiKey),
-            URLQueryItem(name: "games_id", value: String(gameID))
-        ]
-        guard let url = components.url else { return RemoteImages(baseURLs: [:], images: []) }
-
-        let object = try await jsonObject(from: url)
-        guard let data = object["data"] as? [String: Any] else {
-            return RemoteImages(baseURLs: [:], images: [])
-        }
-
-        let baseURLs = data["base_url"] as? [String: String] ?? [:]
-        var images: [RemoteImage] = []
-        if let imageGroups = data["images"] as? [String: [[String: Any]]] {
-            images = imageGroups[String(gameID)]?.compactMap(RemoteImage.init(dictionary:)) ?? []
-        } else if let imageGroups = data["images"] as? [String: [Any]],
-                  let group = imageGroups[String(gameID)] {
-            images = group.compactMap { ($0 as? [String: Any]).flatMap(RemoteImage.init(dictionary:)) }
-        }
-
-        return RemoteImages(baseURLs: baseURLs, images: images)
+    private func games(body: String) async throws -> [RemoteGame] {
+        try await array(endpoint: "games", body: body).compactMap(RemoteGame.init(dictionary:))
     }
 
-    private func jsonObject(from url: URL) async throws -> [String: Any] {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let message = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw MetadataLookupError.providerRejected("TheGamesDB returned HTTP \(http.statusCode)\(message?.isEmpty == false ? ": \(message!)" : ".")")
+    private func array(endpoint: String, body: String) async throws -> [[String: Any]] {
+        let token = try await IGDBTokenCache.shared.accessToken(for: credentials)
+        guard let url = URL(string: "https://api.igdb.com/v4/\(endpoint)") else {
+            throw URLError(.badURL)
         }
-        return (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(credentials.clientID.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "Client-ID")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body.data(using: .utf8)
+
+        await IGDBRateLimiter.shared.acquire()
+        var releasedSlot = false
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            await IGDBRateLimiter.shared.release()
+            releasedSlot = true
+
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                let message = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if http.statusCode == 429 {
+                    throw MetadataLookupError.providerRejected("IGDB rate limit reached. SwitchLoader throttles to 4 requests/sec and 8 open requests, but IGDB still returned HTTP 429\(message?.isEmpty == false ? ": \(message!)" : ".")")
+                }
+                throw MetadataLookupError.providerRejected("IGDB returned HTTP \(http.statusCode)\(message?.isEmpty == false ? ": \(message!)" : ".")")
+            }
+            return (try JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+        } catch {
+            if !releasedSlot {
+                await IGDBRateLimiter.shared.release()
+            }
+            throw error
+        }
     }
 
     private func score(_ candidate: String, against title: String) -> Double {
@@ -2915,10 +3199,20 @@ private struct TheGamesDBMetadataProvider: Sendable {
             .lowercased()
     }
 
+    private static let gameFields = """
+    fields id,name,summary,first_release_date,total_rating,rating,url,platforms.id,platforms.name,cover.image_id,artworks.image_id,screenshots.image_id,genres.name,involved_companies.company.name,involved_companies.developer,involved_companies.publisher,game_modes.name,videos.video_id,alternative_names.name;
+    """
+
+    private static func escaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     private struct RemoteGame {
         let id: Int
         let name: String
-        let overview: String?
+        let summary: String?
         let releaseDate: String?
         let genres: [String]
         let developers: [String]
@@ -2928,15 +3222,18 @@ private struct TheGamesDBMetadataProvider: Sendable {
         let coop: String?
         let youtubeURL: URL?
         let aliases: [String]
+        let coverImageURL: URL?
+        let artworkImageURLs: [URL]
+        let screenshotImageURLs: [URL]
         let platformIDs: Set<Int>
         let platformNames: Set<String>
 
         var match: GameMetadataMatch {
             GameMetadataMatch(
-                provider: "TheGamesDB",
+                provider: "IGDB",
                 providerID: String(id),
                 title: name,
-                summary: overview,
+                summary: summary,
                 releaseDate: releaseDate,
                 platformName: platformNames.sorted().first,
                 rating: rating,
@@ -2950,8 +3247,32 @@ private struct TheGamesDBMetadataProvider: Sendable {
             )
         }
 
+        var metadata: GameMetadata {
+            GameMetadata(
+                provider: "IGDB",
+                providerID: String(id),
+                matchedTitle: name,
+                summary: summary,
+                releaseDate: releaseDate,
+                platformName: platformNames.sorted().first,
+                rating: rating,
+                players: players,
+                coop: coop,
+                youtubeURL: youtubeURL,
+                aliases: aliases,
+                genres: genres,
+                developers: developers,
+                publishers: publishers,
+                bannerImageURL: artworkImageURLs.first ?? screenshotImageURLs.first,
+                artworkImageURL: artworkImageURLs.first ?? screenshotImageURLs.first,
+                coverImageURL: coverImageURL,
+                logoImageURL: nil,
+                screenshotImageURLs: screenshotImageURLs
+            )
+        }
+
         var isNintendoSwitchRelease: Bool {
-            platformIDs.contains(TheGamesDBMetadataProvider.nintendoSwitchPlatformID)
+            platformIDs.contains(IGDBMetadataProvider.nintendoSwitchPlatformID)
                 || platformNames.contains { name in
                     name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
                         .localizedCaseInsensitiveContains("nintendo switch")
@@ -2960,56 +3281,30 @@ private struct TheGamesDBMetadataProvider: Sendable {
 
         init?(dictionary: [String: Any]) {
             guard let id = dictionary["id"] as? Int,
-                  let name = dictionary["game_title"] as? String ?? dictionary["name"] as? String
+                  let name = dictionary["name"] as? String
             else {
                 return nil
             }
 
             self.id = id
             self.name = name
-            self.overview = Self.englishText(from: dictionary["overview"])
-            self.releaseDate = Self.stringValue(from: dictionary["release_date"])
+            self.summary = Self.stringValue(from: dictionary["summary"])
+            self.releaseDate = Self.releaseDate(from: dictionary["first_release_date"])
             self.genres = Self.stringList(from: dictionary["genres"])
-            self.developers = Self.stringList(from: dictionary["developers"])
-            self.publishers = Self.stringList(from: dictionary["publishers"])
-            self.rating = Self.stringValue(from: dictionary["rating"] ?? dictionary["esrb"] ?? dictionary["certification"])
-            self.players = Self.stringValue(from: dictionary["players"] ?? dictionary["max_players"])
-            self.coop = Self.stringValue(from: dictionary["coop"] ?? dictionary["co-op"] ?? dictionary["co_op"])
-            self.youtubeURL = Self.youtubeURL(from: dictionary["youtube"] ?? dictionary["youtube_url"] ?? dictionary["trailer"])
-            self.aliases = Self.stringList(from: dictionary["alternates"] ?? dictionary["aliases"] ?? dictionary["alternate_titles"])
-            let platform = Self.platformValues(from: dictionary["platform"])
-            let platformID = Self.platformValues(from: dictionary["platform_id"])
+            self.developers = Self.companyList(from: dictionary["involved_companies"], role: "developer")
+            self.publishers = Self.companyList(from: dictionary["involved_companies"], role: "publisher")
+            self.rating = Self.rating(from: dictionary["total_rating"] ?? dictionary["rating"])
+            let modes = Self.stringList(from: dictionary["game_modes"])
+            self.players = modes.isEmpty ? nil : modes.joined(separator: ", ")
+            self.coop = modes.contains { $0.localizedCaseInsensitiveContains("co-op") || $0.localizedCaseInsensitiveContains("cooperative") } ? "Yes" : nil
+            self.youtubeURL = Self.youtubeURL(from: dictionary["videos"])
+            self.aliases = Self.stringList(from: dictionary["alternative_names"])
+            self.coverImageURL = Self.imageURL(from: dictionary["cover"], size: "cover_big")
+            self.artworkImageURLs = Self.imageURLs(from: dictionary["artworks"], size: "1080p")
+            self.screenshotImageURLs = Self.imageURLs(from: dictionary["screenshots"], size: "1080p")
             let platforms = Self.platformValues(from: dictionary["platforms"])
-            self.platformIDs = platform.ids.union(platformID.ids).union(platforms.ids)
-            self.platformNames = platform.names.union(platformID.names).union(platforms.names)
-        }
-
-        private static func englishText(from value: Any?) -> String? {
-            if let string = value as? String {
-                return string.isEmpty ? nil : string
-            }
-
-            if let dictionary = value as? [String: Any] {
-                for key in ["en", "eng", "english", "EN", "English"] {
-                    if let text = stringValue(from: dictionary[key]), !text.isEmpty {
-                        return text
-                    }
-                }
-                return dictionary.values.compactMap { stringValue(from: $0) }.first { !$0.isEmpty }
-            }
-
-            if let values = value as? [[String: Any]] {
-                let english = values.first { entry in
-                    let language = stringValue(from: entry["language"] ?? entry["lang"] ?? entry["locale"]) ?? ""
-                    return language.localizedCaseInsensitiveContains("en")
-                        || language.localizedCaseInsensitiveContains("english")
-                }
-                if let text = english.flatMap({ stringValue(from: $0["text"] ?? $0["overview"] ?? $0["value"]) }), !text.isEmpty {
-                    return text
-                }
-            }
-
-            return nil
+            self.platformIDs = platforms.ids
+            self.platformNames = platforms.names
         }
 
         private static func stringValue(from value: Any?) -> String? {
@@ -3026,12 +3321,45 @@ private struct TheGamesDBMetadataProvider: Sendable {
             }
         }
 
+        private static func releaseDate(from value: Any?) -> String? {
+            guard let seconds = (value as? NSNumber)?.doubleValue ?? Double(stringValue(from: value) ?? "") else {
+                return nil
+            }
+            let date = Date(timeIntervalSince1970: seconds)
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: date)
+        }
+
+        private static func rating(from value: Any?) -> String? {
+            guard let number = value as? NSNumber else { return stringValue(from: value) }
+            return "\(Int(number.doubleValue.rounded()))%"
+        }
+
         private static func youtubeURL(from value: Any?) -> URL? {
+            if let videos = value as? [[String: Any]],
+               let videoID = videos.compactMap({ stringValue(from: $0["video_id"]) }).first {
+                return URL(string: "https://www.youtube.com/watch?v=\(videoID)")
+            }
             guard let text = stringValue(from: value) else { return nil }
             if let url = URL(string: text), url.scheme != nil {
                 return url
             }
             return URL(string: "https://www.youtube.com/watch?v=\(text)")
+        }
+
+        private static func companyList(from value: Any?, role: String) -> [String] {
+            guard let values = value as? [[String: Any]] else { return [] }
+            return values.compactMap { entry in
+                let isRole = (entry[role] as? Bool) ?? (entry[role] as? NSNumber)?.boolValue ?? false
+                guard isRole else { return nil }
+                if let company = entry["company"] as? [String: Any] {
+                    return stringValue(from: company["name"])
+                }
+                return nil
+            }
         }
 
         private static func stringList(from value: Any?) -> [String] {
@@ -3053,6 +3381,19 @@ private struct TheGamesDBMetadataProvider: Sendable {
                 return dictionary.values.compactMap { stringValue(from: $0) }
             }
             return []
+        }
+
+        private static func imageURL(from value: Any?, size: String) -> URL? {
+            if let dictionary = value as? [String: Any],
+               let imageID = stringValue(from: dictionary["image_id"]) {
+                return URL(string: "https://images.igdb.com/igdb/image/upload/t_\(size)/\(imageID).jpg")
+            }
+            return nil
+        }
+
+        private static func imageURLs(from value: Any?, size: String) -> [URL] {
+            guard let values = value as? [[String: Any]] else { return [] }
+            return values.compactMap { imageURL(from: $0, size: size) }
         }
 
         private static func platformValues(from value: Any?) -> (ids: Set<Int>, names: Set<String>) {
@@ -3088,42 +3429,4 @@ private struct TheGamesDBMetadataProvider: Sendable {
         }
     }
 
-    private struct RemoteImage {
-        let type: String
-        let filename: String
-
-        init?(dictionary: [String: Any]) {
-            guard let type = dictionary["type"] as? String,
-                  let filename = dictionary["filename"] as? String
-            else {
-                return nil
-            }
-
-            self.type = type.lowercased()
-            self.filename = filename
-        }
-    }
-
-    private struct RemoteImages {
-        let baseURLs: [String: String]
-        let images: [RemoteImage]
-
-        func preferredURL(types: [String]) -> URL? {
-            urls(types: types).first
-        }
-
-        func urls(types: [String]) -> [URL] {
-            let wanted = types.map { $0.lowercased() }
-            return images
-                .filter { wanted.contains($0.type) }
-                .compactMap { url(for: $0) }
-        }
-
-        private func url(for image: RemoteImage) -> URL? {
-            let base = baseURLs["original"] ?? baseURLs["large"] ?? baseURLs["medium"] ?? baseURLs.values.first
-            guard let base else { return nil }
-            let separator = base.hasSuffix("/") ? "" : "/"
-            return URL(string: base + separator + image.filename)
-        }
-    }
 }

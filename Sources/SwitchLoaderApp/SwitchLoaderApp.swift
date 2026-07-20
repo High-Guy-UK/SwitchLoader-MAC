@@ -3,14 +3,16 @@ import SwiftUI
 @main
 struct SwitchLoaderApp: App {
     @StateObject private var model = SwitchLoaderModel()
+    private let initialWindowWidth = 1640.0
+    private let initialWindowHeight = 800.0
 
     var body: some Scene {
         WindowGroup {
             LaunchGateView()
                 .environmentObject(model)
-                .frame(width: 1020, height: 620)
+                .frame(minWidth: 1280, minHeight: 720)
         }
-        .defaultSize(width: 1020, height: 620)
+        .defaultSize(width: initialWindowWidth, height: initialWindowHeight)
         .windowResizability(.contentSize)
         .windowStyle(.titleBar)
     }
